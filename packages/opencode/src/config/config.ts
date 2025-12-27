@@ -310,6 +310,23 @@ export namespace Config {
     return plugins
   }
 
+  export const McpRestart = z
+    .object({
+      enabled: z.boolean().optional().describe("Enable auto-reconnect on connection loss. Defaults to true."),
+      maxAttempts: z.number().int().positive().optional().describe("Maximum reconnection attempts. Defaults to 3."),
+      delayMs: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Delay between reconnection attempts in milliseconds. Defaults to 1000."),
+    })
+    .strict()
+    .meta({
+      ref: "McpRestartConfig",
+    })
+  export type McpRestart = z.infer<typeof McpRestart>
+
   export const McpLocal = z
     .object({
       type: z.literal("local").describe("Type of MCP server connection"),
@@ -327,6 +344,7 @@ export namespace Config {
         .describe(
           "Timeout in ms for fetching tools from the MCP server. Defaults to 5000 (5 seconds) if not specified.",
         ),
+      restart: McpRestart.optional().describe("Auto-reconnection configuration. Enabled by default."),
     })
     .strict()
     .meta({
@@ -368,6 +386,7 @@ export namespace Config {
         .describe(
           "Timeout in ms for fetching tools from the MCP server. Defaults to 5000 (5 seconds) if not specified.",
         ),
+      restart: McpRestart.optional().describe("Auto-reconnection configuration. Enabled by default."),
     })
     .strict()
     .meta({
