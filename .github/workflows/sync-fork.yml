@@ -5,12 +5,16 @@ on:
     - cron: "0 */2 * * *" # Every 2 hours
   workflow_dispatch: # Manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   sync-and-rebase:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: dev
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -19,19 +23,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Check if upstream has new commits
-        id: check
+      - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/sst/opencode.git || true
           git fetch upstream
+          git fetch origin
+
+      - name: Check if upstream has new commits
+        id: check
+        run: |
           LOCAL=$(git rev-parse origin/dev)
           REMOTE=$(git rev-parse upstream/dev)
+          echo "Local dev:     $LOCAL"
+          echo "Upstream dev:  $REMOTE"
           if [ "$LOCAL" = "$REMOTE" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "No new upstream commits"
+            echo "✅ No new upstream commits"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
-            echo "New upstream commits detected"
+            echo "📥 New upstream commits detected"
           fi
 
       - name: Sync dev with upstream
@@ -40,10 +50,17 @@ jobs:
           git checkout dev
           git reset --hard upstream/dev
           git push origin dev --force
+          echo "✅ dev branch synced"
 
       - name: Rebase rmk onto dev
         if: steps.check.outputs.skip == 'false'
         run: |
           git checkout rmk
-          git rebase dev
-          git push origin rmk --force
+          if git rebase dev; then
+            git push origin rmk --force
+            echo "✅ rmk branch rebased and pushed"
+          else
+            echo "❌ Rebase failed - manual intervention required"
+            git rebase --abort
+            exit 1
+          fi
