@@ -4,10 +4,12 @@ This fork of [sst/opencode](https://github.com/sst/opencode) maintains custom pa
 
 ## Branch Structure
 
-| Branch | Purpose                                                  |
-| ------ | -------------------------------------------------------- |
-| `dev`  | Pure mirror of upstream `sst/opencode:dev` (auto-synced) |
-| `rmk`  | Custom patches rebased on top of `dev`                   |
+| Branch | Purpose                                                      |
+| ------ | ------------------------------------------------------------ |
+| `dev`  | Pure mirror of upstream `sst/opencode:dev` (auto-synced)     |
+| `rmk`  | Custom patches rebased on top of **latest upstream release** |
+
+**Strategy:** The `rmk` branch tracks stable releases (e.g., `v1.0.204`) rather than the bleeding-edge `dev` branch. This provides stability while still allowing custom patches on top.
 
 ## Syncing with Upstream
 
@@ -21,9 +23,9 @@ Run the sync script locally:
 
 This will:
 
-1. Check if upstream has new commits
-2. Sync `dev` with upstream
-3. Rebase `rmk` onto the updated `dev`
+1. Check if upstream has published a new release
+2. Sync `dev` with upstream (for reference)
+3. Rebase `rmk` onto the **latest release commit**
 4. Force push both branches to your fork
 
 ### Option 2: Automatic Syncing (GitHub Actions)
@@ -63,9 +65,13 @@ If the automated rebase fails (you'll get a GitHub notification):
 git fetch origin
 git fetch fork
 
-# Checkout rmk and rebase manually
+# Find the latest release commit
+LATEST_RELEASE=$(git log origin/dev --oneline --grep="^release: v" --max-count=1 --format="%H")
+CURRENT_BASE=$(git merge-base fork/rmk origin/dev)
+
+# Checkout rmk and rebase manually onto latest release
 git checkout rmk
-git rebase origin/dev
+git rebase --onto $LATEST_RELEASE $CURRENT_BASE rmk
 
 # Resolve conflicts
 # ... edit files ...
@@ -73,7 +79,7 @@ git add <resolved-files>
 git rebase --continue
 
 # Force push the fixed branch
-git push fork rmk --force
+git push fork rmk --force --no-verify
 ```
 
 ## Deploying
@@ -88,19 +94,27 @@ git pull fork rmk
 
 ## Current Patches
 
-Patches in `rmk` branch (on top of upstream):
+**Base:** `release: v1.0.204` (latest stable release)
 
-1. **MCP Auto-Reconnection** - Automatic reconnection for MCP servers
-   - Addresses: #1878, #829
-   - Status: Not yet submitted upstream
+Patches in `rmk` branch (4 commits ahead):
 
-2. **Session Switcher** - Interactive dialog for navigating between subagent sessions
+1. **Session Switcher** - Interactive dialog for navigating between subagent sessions
    - PR: https://github.com/sst/opencode/pull/6184
    - Status: Pending review
    - If merged upstream, this patch can be removed
 
-3. **Fork Maintenance** - Documentation and tooling for maintaining this fork
+2. **Fork Maintenance Guide** - Initial documentation for fork workflow
    - Status: Fork-specific, will not be submitted upstream
+
+3. **Fork Maintenance Tooling** - Scripts and automation for maintaining this fork
+   - `script/sync-fork.sh` - Manual sync script (release-based)
+   - `script/oc-wrapper.sh` - Run fork from any directory
+   - `.github/workflows/sync-fork.yml` - Automated sync workflow
+   - Status: Fork-specific, will not be submitted upstream
+
+4. **MCP Auto-Reconnection** - Automatic reconnection for MCP servers
+   - Addresses: #1878, #829
+   - Status: Not yet submitted upstream
 
 ## Upstream PRs
 

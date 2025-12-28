@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sync fork with upstream and rebase patches
+# Sync fork with upstream releases and rebase patches
 # Usage: ./script/sync-fork.sh
 
 UPSTREAM_REMOTE="origin"  # sst/opencode
@@ -9,28 +9,36 @@ FORK_REMOTE="fork"        # rmk40/opencode
 UPSTREAM_BRANCH="dev"
 PATCH_BRANCH="rmk"
 
-echo "🔍 Checking for upstream changes..."
+echo "🔍 Checking for new upstream releases..."
 
 # Fetch all remotes
 git fetch "$UPSTREAM_REMOTE"
 git fetch "$FORK_REMOTE"
 
-# Check if upstream has new commits
-LOCAL=$(git rev-parse "$FORK_REMOTE/$UPSTREAM_BRANCH" 2>/dev/null || echo "none")
-REMOTE=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH")
+# Find latest release commit (pattern: "release: v1.0.XXX")
+LATEST_RELEASE=$(git log "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH" --oneline --grep="^release: v" --max-count=1 --format="%H")
+LATEST_VERSION=$(git log "$LATEST_RELEASE" --oneline --format="%s" -1)
 
-if [ "$LOCAL" = "$REMOTE" ]; then
-  echo "✅ Fork is up to date with upstream"
-  echo "   $UPSTREAM_REMOTE/$UPSTREAM_BRANCH: $REMOTE"
+if [ -z "$LATEST_RELEASE" ]; then
+  echo "❌ No release commits found in upstream"
+  exit 1
+fi
+
+# Get current base of rmk branch (first commit that's not our patches)
+CURRENT_BASE=$(git merge-base "$FORK_REMOTE/$PATCH_BRANCH" "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH")
+
+if [ "$CURRENT_BASE" = "$LATEST_RELEASE" ]; then
+  echo "✅ Already based on latest release: $LATEST_VERSION"
+  echo "   Commit: $(echo $LATEST_RELEASE | cut -c1-8)"
   exit 0
 fi
 
-echo "📥 New upstream commits detected"
-echo "   Local:    $LOCAL"
-echo "   Upstream: $REMOTE"
+echo "📥 New release detected: $LATEST_VERSION"
+echo "   Current base: $(git log $CURRENT_BASE --oneline --format="%s" -1 | cut -c1-60)"
+echo "   New release:  $LATEST_VERSION"
 echo ""
 
-# Sync dev with upstream
+# Sync dev with upstream (for reference)
 echo "🔄 Syncing $UPSTREAM_BRANCH with upstream..."
 git checkout "$UPSTREAM_BRANCH"
 git reset --hard "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
@@ -39,11 +47,11 @@ git push "$FORK_REMOTE" "$UPSTREAM_BRANCH" --force --no-verify
 echo "✅ $UPSTREAM_BRANCH synced"
 echo ""
 
-# Rebase rmk onto dev
-echo "🔄 Rebasing $PATCH_BRANCH onto $UPSTREAM_BRANCH..."
+# Rebase rmk onto latest release
+echo "🔄 Rebasing $PATCH_BRANCH onto $LATEST_VERSION..."
 git checkout "$PATCH_BRANCH"
 
-if git rebase "$UPSTREAM_BRANCH"; then
+if git rebase --onto "$LATEST_RELEASE" "$CURRENT_BASE" "$PATCH_BRANCH"; then
   echo "✅ Rebase successful"
   git push "$FORK_REMOTE" "$PATCH_BRANCH" --force --no-verify
   echo "✅ $PATCH_BRANCH pushed to fork"
@@ -60,5 +68,5 @@ fi
 
 echo ""
 echo "🎉 Sync complete!"
-echo "   $UPSTREAM_BRANCH: $(git rev-parse $FORK_REMOTE/$UPSTREAM_BRANCH | cut -c1-8)"
-echo "   $PATCH_BRANCH: $(git rev-parse $FORK_REMOTE/$PATCH_BRANCH | cut -c1-8)"
+echo "   Base release: $LATEST_VERSION ($(echo $LATEST_RELEASE | cut -c1-8))"
+echo "   Patches: $(git log $LATEST_RELEASE..$PATCH_BRANCH --oneline | wc -l | tr -d ' ')"

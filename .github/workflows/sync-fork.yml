@@ -29,19 +29,28 @@ jobs:
           git fetch upstream
           git fetch origin
 
-      - name: Check if upstream has new commits
+      - name: Check for new release
         id: check
         run: |
-          LOCAL=$(git rev-parse origin/dev)
-          REMOTE=$(git rev-parse upstream/dev)
-          echo "Local dev:     $LOCAL"
-          echo "Upstream dev:  $REMOTE"
-          if [ "$LOCAL" = "$REMOTE" ]; then
+          # Find latest release commit
+          LATEST_RELEASE=$(git log upstream/dev --oneline --grep="^release: v" --max-count=1 --format="%H")
+          LATEST_VERSION=$(git log $LATEST_RELEASE --oneline --format="%s" -1)
+
+          # Get current base of rmk branch
+          CURRENT_BASE=$(git merge-base origin/rmk upstream/dev)
+
+          echo "Current base: $(git log $CURRENT_BASE --oneline --format="%s" -1)"
+          echo "Latest release: $LATEST_VERSION"
+
+          if [ "$CURRENT_BASE" = "$LATEST_RELEASE" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "✅ No new upstream commits"
+            echo "✅ Already based on latest release: $LATEST_VERSION"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
-            echo "📥 New upstream commits detected"
+            echo "release=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+            echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "base=$CURRENT_BASE" >> $GITHUB_OUTPUT
+            echo "📥 New release detected: $LATEST_VERSION"
           fi
 
       - name: Sync dev with upstream
@@ -52,13 +61,13 @@ jobs:
           git push origin dev --force
           echo "✅ dev branch synced"
 
-      - name: Rebase rmk onto dev
+      - name: Rebase rmk onto latest release
         if: steps.check.outputs.skip == 'false'
         run: |
           git checkout rmk
-          if git rebase dev; then
+          if git rebase --onto ${{ steps.check.outputs.release }} ${{ steps.check.outputs.base }} rmk; then
             git push origin rmk --force
-            echo "✅ rmk branch rebased and pushed"
+            echo "✅ rmk rebased onto ${{ steps.check.outputs.version }}"
           else
             echo "❌ Rebase failed - manual intervention required"
             git rebase --abort
