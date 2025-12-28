@@ -78,6 +78,15 @@ export namespace MCP {
         .meta({
           ref: "MCPStatusNeedsClientRegistration",
         }),
+      z
+        .object({
+          status: z.literal("reconnecting"),
+          attempt: z.number().optional(),
+          maxAttempts: z.number().optional(),
+        })
+        .meta({
+          ref: "MCPStatusReconnecting",
+        }),
     ])
     .meta({
       ref: "MCPStatus",
@@ -120,15 +129,38 @@ export namespace MCP {
   type TransportWithAuth = StreamableHTTPClientTransport | SSEClientTransport
   const pendingOAuthTransports = new Map<string, TransportWithAuth>()
 
+  // Default restart configuration
+  const DEFAULT_RESTART = {
+    enabled: true,
+    maxAttempts: 3,
+    delayMs: 1000,
+  }
+
+  function getRestartConfig(mcp: Config.Mcp): Required<Config.McpRestart> {
+    const restart = mcp.restart ?? {}
+    return {
+      enabled: restart.enabled ?? DEFAULT_RESTART.enabled,
+      maxAttempts: restart.maxAttempts ?? DEFAULT_RESTART.maxAttempts,
+      delayMs: restart.delayMs ?? DEFAULT_RESTART.delayMs,
+    }
+  }
+
+  // Track if reconnection is in progress to prevent duplicate attempts
+  const reconnecting = new Set<string>()
+
   const state = Instance.state(
     async () => {
       const cfg = await Config.get()
       const config = cfg.mcp ?? {}
       const clients: Record<string, MCPClient> = {}
       const status: Record<string, Status> = {}
+      const configs: Record<string, Config.Mcp> = {}
 
       await Promise.all(
         Object.entries(config).map(async ([key, mcp]) => {
+          // Store config for potential reconnection
+          configs[key] = mcp
+
           // If disabled by config, mark as disabled without trying to connect
           if (mcp.enabled === false) {
             status[key] = { status: "disabled" }
@@ -148,6 +180,7 @@ export namespace MCP {
       return {
         status,
         clients,
+        configs,
       }
     },
     async (state) => {
@@ -161,11 +194,14 @@ export namespace MCP {
         ),
       )
       pendingOAuthTransports.clear()
+      reconnecting.clear()
     },
   )
 
   export async function add(name: string, mcp: Config.Mcp) {
     const s = await state()
+    // Store config for potential reconnection
+    s.configs[name] = mcp
     const result = await create(name, mcp)
     if (!result) {
       const status = {
@@ -253,6 +289,7 @@ export namespace MCP {
           })
           await client.connect(transport)
           registerNotificationHandlers(client, key)
+          setupCloseHandler(key, transport, mcp)
           mcpClient = client
           log.info("connected", { key, transport: name })
           status = { status: "connected" }
@@ -328,6 +365,7 @@ export namespace MCP {
         })
         await client.connect(transport)
         registerNotificationHandlers(client, key)
+        setupCloseHandler(key, transport, mcp)
         mcpClient = client
         status = {
           status: "connected",
@@ -390,6 +428,126 @@ export namespace MCP {
     }
   }
 
+  /**
+   * Set up close handler for transport to enable auto-reconnection.
+   */
+  function setupCloseHandler(key: string, transport: { onclose?: (() => void) | undefined }, mcp: Config.Mcp) {
+    const restart = getRestartConfig(mcp)
+    if (!restart.enabled) return
+
+    transport.onclose = () => {
+      log.info("mcp transport closed", { key })
+      // Only reconnect if not already reconnecting and not manually disconnected
+      state()
+        .then((s) => {
+          const currentStatus = s.status[key]
+          if (currentStatus?.status === "connected" && !reconnecting.has(key)) {
+            reconnect(key, mcp, restart.maxAttempts, restart.delayMs).catch((e) =>
+              log.error("reconnection failed", { key, error: e }),
+            )
+          }
+        })
+        .catch((e) => log.error("failed to get state for reconnect check", { key, error: e }))
+    }
+  }
+
+  /**
+   * Attempt to reconnect to an MCP server after connection loss.
+   */
+  async function reconnect(key: string, mcp: Config.Mcp, maxAttempts: number, delayMs: number): Promise<void> {
+    if (reconnecting.has(key)) {
+      log.debug("reconnection already in progress", { key })
+      return
+    }
+
+    reconnecting.add(key)
+    const s = await state()
+
+    // Clean up existing client
+    const existingClient = s.clients[key]
+    if (existingClient) {
+      await existingClient.close().catch((e) => log.debug("close failed during reconnect", { key, error: e }))
+      delete s.clients[key]
+    }
+
+    // Notify UI
+    Bus.publish(TuiEvent.ToastShow, {
+      title: "MCP Reconnecting",
+      message: `Connection lost to "${key}", reconnecting...`,
+      variant: "warning",
+      duration: 3000,
+    }).catch(() => {})
+
+    let attempt = 0
+    while (attempt < maxAttempts) {
+      attempt++
+      s.status[key] = { status: "reconnecting", attempt, maxAttempts }
+      log.info("mcp reconnect attempt", { key, attempt, maxAttempts })
+
+      // Wait before attempt (except first)
+      if (attempt > 1) {
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
+
+      const result = await create(key, mcp).catch(() => undefined)
+      if (result?.mcpClient) {
+        s.clients[key] = result.mcpClient
+        s.configs[key] = mcp
+        s.status[key] = { status: "connected" }
+        reconnecting.delete(key)
+
+        Bus.publish(TuiEvent.ToastShow, {
+          title: "MCP Reconnected",
+          message: `Successfully reconnected to "${key}"`,
+          variant: "success",
+          duration: 3000,
+        }).catch(() => {})
+
+        Bus.publish(ToolsChanged, { server: key }).catch(() => {})
+        return
+      }
+
+      log.warn("mcp reconnect attempt failed", { key, attempt, maxAttempts })
+    }
+
+    // All attempts exhausted
+    reconnecting.delete(key)
+    s.status[key] = {
+      status: "failed",
+      error: `Reconnection failed after ${maxAttempts} attempts`,
+    }
+
+    Bus.publish(TuiEvent.ToastShow, {
+      title: "MCP Reconnection Failed",
+      message: `Could not reconnect to "${key}" after ${maxAttempts} attempts`,
+      variant: "error",
+      duration: 5000,
+    }).catch(() => {})
+  }
+
+  /**
+   * Manually trigger reconnection for an MCP server.
+   */
+  export async function reconnectMcp(name: string): Promise<Status> {
+    const s = await state()
+    let mcp = s.configs[name]
+
+    if (!mcp) {
+      // Try to get from config
+      const cfg = await Config.get()
+      const mcpConfig = cfg.mcp?.[name]
+      if (!mcpConfig) {
+        return { status: "failed", error: `MCP "${name}" not found in config` }
+      }
+      mcp = mcpConfig
+    }
+
+    const restart = getRestartConfig(mcp)
+    await reconnect(name, mcp, restart.maxAttempts, restart.delayMs)
+
+    return s.status[name] ?? { status: "failed", error: "Unknown error" }
+  }
+
   export async function status() {
     const s = await state()
     const cfg = await Config.get()
@@ -417,7 +575,8 @@ export namespace MCP {
       return
     }
 
-    const result = await create(name, { ...mcp, enabled: true })
+    const mcpWithEnabled = { ...mcp, enabled: true }
+    const result = await create(name, mcpWithEnabled)
 
     if (!result) {
       const s = await state()
@@ -429,6 +588,8 @@ export namespace MCP {
     }
 
     const s = await state()
+    // Store config for potential reconnection
+    s.configs[name] = mcpWithEnabled
     s.status[name] = result.status
     if (result.mcpClient) {
       s.clients[name] = result.mcpClient

@@ -36,19 +36,6 @@ function getAuthStatusText(status: MCP.AuthStatus): string {
   }
 }
 
-export const McpCommand = cmd({
-  command: "mcp",
-  builder: (yargs) =>
-    yargs
-      .command(McpAddCommand)
-      .command(McpListCommand)
-      .command(McpAuthCommand)
-      .command(McpLogoutCommand)
-      .command(McpDebugCommand)
-      .demandCommand(),
-  async handler() {},
-})
-
 export const McpListCommand = cmd({
   command: "list",
   aliases: ["ls"],
@@ -98,6 +85,12 @@ export const McpListCommand = cmd({
             statusIcon = "✗"
             statusText = "needs client registration"
             hint = "\n    " + status.error
+          } else if (status.status === "reconnecting") {
+            statusIcon = "↻"
+            statusText =
+              status.attempt && status.maxAttempts
+                ? `reconnecting (${status.attempt}/${status.maxAttempts})`
+                : "reconnecting"
           } else {
             statusIcon = "✗"
             statusText = "failed"
@@ -651,4 +644,118 @@ export const McpDebugCommand = cmd({
       },
     })
   },
+})
+
+export const McpReconnectCommand = cmd({
+  command: "reconnect [name]",
+  describe: "manually reconnect to an MCP server",
+  builder: (yargs) =>
+    yargs.positional("name", {
+      describe: "name of the MCP server (or 'all' to reconnect all failed)",
+      type: "string",
+    }),
+  async handler(args) {
+    await Instance.provide({
+      directory: process.cwd(),
+      async fn() {
+        UI.empty()
+        prompts.intro("MCP Reconnect")
+
+        const config = await Config.get()
+        const mcpServers = config.mcp ?? {}
+        const statuses = await MCP.status()
+
+        if (Object.keys(mcpServers).length === 0) {
+          prompts.log.warn("No MCP servers configured")
+          prompts.outro("Done")
+          return
+        }
+
+        if (args.name === "all") {
+          // Reconnect all failed MCPs
+          const failed = Object.entries(statuses).filter(([_, s]) => s.status === "failed")
+          if (failed.length === 0) {
+            prompts.log.info("No failed MCP servers to reconnect")
+            prompts.outro("Done")
+            return
+          }
+
+          for (const [name] of failed) {
+            const spinner = prompts.spinner()
+            spinner.start(`Reconnecting ${name}...`)
+            const result = await MCP.reconnectMcp(name)
+            if (result.status === "connected") {
+              spinner.stop(`${name}: reconnected`)
+            } else if (result.status === "failed" && "error" in result) {
+              spinner.stop(`${name}: ${result.error}`, 1)
+            } else {
+              spinner.stop(`${name}: ${result.status}`, 1)
+            }
+          }
+          prompts.outro("Done")
+          return
+        }
+
+        // Single server reconnect
+        let serverName = args.name
+        if (!serverName) {
+          const reconnectableStatuses = ["failed", "disabled"] as const
+          const options = Object.entries(statuses)
+            .filter(([_, s]) => reconnectableStatuses.includes(s.status as (typeof reconnectableStatuses)[number]))
+            .map(([name, status]) => ({
+              label: `${name} (${status.status})`,
+              value: name,
+            }))
+
+          if (options.length === 0) {
+            prompts.log.info("No disconnected or failed MCP servers to reconnect")
+            prompts.outro("Done")
+            return
+          }
+
+          const selected = await prompts.select({
+            message: "Select MCP server to reconnect",
+            options,
+          })
+          if (prompts.isCancel(selected)) throw new UI.CancelledError()
+          serverName = selected
+        }
+
+        if (!mcpServers[serverName]) {
+          prompts.log.error(`MCP server not found: ${serverName}`)
+          prompts.outro("Done")
+          return
+        }
+
+        const spinner = prompts.spinner()
+        spinner.start(`Reconnecting to ${serverName}...`)
+
+        const result = await MCP.reconnectMcp(serverName)
+
+        if (result.status === "connected") {
+          spinner.stop("Reconnected successfully")
+        } else if (result.status === "failed" && "error" in result) {
+          spinner.stop(`Failed: ${result.error}`, 1)
+        } else {
+          spinner.stop(`Status: ${result.status}`, 1)
+        }
+
+        prompts.outro("Done")
+      },
+    })
+  },
+})
+
+export const McpCommand = cmd({
+  command: "mcp",
+  builder: (yargs) =>
+    yargs
+      .command(McpAddCommand)
+      .command(McpListCommand)
+      .command(McpAuthCommand)
+      .command(McpLogoutCommand)
+      .command(McpDebugCommand)
+      .command(McpReconnectCommand)
+      .demandCommand(),
+  async handler() {},
 })
