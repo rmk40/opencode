@@ -1,0 +1,109 @@
+name: fork release artifacts
+run-name: ${{ format('actualyze {0}-{1}', inputs.upstream_version, inputs.suffix) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_version:
+        description: Upstream OpenCode version, for example 1.14.24
+        required: true
+        type: string
+      suffix:
+        description: Fork prerelease suffix, for example aai.1
+        required: true
+        type: string
+      create_release:
+        description: Create a draft GitHub release from the built artifacts
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ inputs.upstream_version }}-${{ inputs.suffix }}
+  cancel-in-progress: false
+
+jobs:
+  build-cli:
+    name: build cli artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      channel: ${{ steps.vars.outputs.channel }}
+      models_snapshot_sha256: ${{ steps.build.outputs.models_snapshot_sha256 }}
+      models_snapshot_asset: ${{ steps.build.outputs.models_snapshot_asset }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Validate dispatch
+        id: vars
+        env:
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
+          SUFFIX: ${{ inputs.suffix }}
+        run: >-
+          bun run release:fork -- validate
+          --upstream-version "$UPSTREAM_VERSION"
+          --suffix "$SUFFIX"
+
+      - name: Build CLI artifacts
+        id: build
+        env:
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
+          SUFFIX: ${{ inputs.suffix }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          RAW_INPUTS: ${{ toJson(inputs) }}
+        run: >-
+          bun run release:fork -- build
+          --upstream-version "$UPSTREAM_VERSION"
+          --suffix "$SUFFIX"
+          --version "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-dist
+          path: ${{ runner.temp }}/fork-release/opencode-cli-dist.tar
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-build-metadata
+          path: ${{ runner.temp }}/fork-release/release-metadata/**
+          if-no-files-found: error
+
+  draft-release:
+    name: create draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-cli
+    if: ${{ inputs.create_release }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opencode-cli-dist
+          path: ${{ runner.temp }}/fork-release
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opencode-build-metadata
+          path: ${{ runner.temp }}/fork-release/release-metadata
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-cli.outputs.version }}
+        run: >-
+          bun run release:fork -- release
+          --version "$VERSION"

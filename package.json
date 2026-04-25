@@ -13,6 +13,7 @@
     "dev:storybook": "bun --cwd packages/storybook storybook",
     "lint": "oxlint",
     "typecheck": "bun turbo typecheck",
+    "release:fork": "bash script/fork-release-artifacts.sh",
     "postinstall": "bun run --cwd packages/opencode fix-node-pty",
     "prepare": "husky",
     "random": "echo 'Random script'",
