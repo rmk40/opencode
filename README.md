@@ -381,6 +381,123 @@ The pipeline is designed to fail closed.
 Never use the GitHub UI's "Re-run failed jobs" button on a partial
 publish — always start a fresh tag.
 
+## Running from source
+
+For day-to-day hacking on this repo you don't want to install a
+release; you want to run the CLI straight out of the working tree.
+The upstream tooling for that already works on the fork — the fork
+only changes release identity, not the dev loop.
+
+### One-time setup
+
+```bash
+bun install
+```
+
+Bun 1.3+ is required (`packageManager` pins `bun@1.3.13`). The root
+`postinstall` runs `packages/opencode/script/fix-node-pty.ts` to wire
+up `node-pty` for your platform; using `npm`/`pnpm` will silently break
+workspace links and patches.
+
+### `bun dev` — the primary loop
+
+```bash
+bun dev                  # TUI in packages/opencode (the default cwd)
+bun dev .                # TUI in the repo root
+bun dev /some/project    # TUI against another directory
+bun dev --help           # full CLI surface, same as the built binary
+bun dev serve            # headless API server on :4096
+bun dev serve --port 8080
+bun dev web              # server + open web UI
+```
+
+`bun dev` is just `bun run --cwd packages/opencode --conditions=browser src/index.ts`.
+Edits to TypeScript source are picked up on the next run with no
+separate build step. The `--conditions=browser` flag is required so
+the conditional `imports` in `packages/opencode/package.json` (`#db`,
+`#pty`, `#hono`) resolve to the right adapters.
+
+### Adjacent dev servers
+
+| Goal                   | Command                                              |
+| ---------------------- | ---------------------------------------------------- |
+| Web UI dev server      | `bun run --cwd packages/app dev` (server must be up) |
+| Desktop (Tauri) shell  | `bun run --cwd packages/desktop tauri dev`           |
+| Console app dev server | `bun dev:console`                                    |
+| Storybook              | `bun dev:storybook`                                  |
+
+### "localcode" — a standalone binary from source
+
+When you need to test the actual compiled artifact (`Bun.build`
+output) — verifying `script/build.ts` changes, validating the binary
+that the release pipeline would ship, or just running outside Bun's
+runner — build a single-target executable:
+
+```bash
+./packages/opencode/script/build.ts --single
+./packages/opencode/dist/opencode-<platform>-<arch>/bin/opencode --help
+```
+
+This is **not** the fork-pipeline build. It does not bake the fork
+identity defines (`OPENCODE_REPO`, `OPENCODE_NPM_PACKAGE`,
+`OPENCODE_NPM_REGISTRY`), so `opencode upgrade` from this binary
+behaves like an upstream build — which for local dev is fine, you
+don't want it auto-upgrading anyway.
+
+### Fork-style local build
+
+If you specifically need to test fork upgrade behavior locally
+(`opencode upgrade` querying `@rmk40/opencode@aai`), invoke the
+release helper in local-debug mode:
+
+```bash
+export FORK_RELEASE_SKIP_CONTEXT_CHECK=1
+bun run release:fork -- build \
+  --upstream-version 1.14.24 \
+  --suffix aai.0 \
+  --version 1.14.24-aai.0
+```
+
+`aai.0` is intentionally invalid for publishing (the publish regex
+requires `[1-9][0-9]*`), so it's a safe sentinel meaning "local
+debug build, never going to ship". Real `aai.N` suffixes belong to
+CI tags.
+
+### Debugging
+
+```bash
+# Server with debugger attached, separate process
+bun run --inspect=ws://localhost:6499/ --cwd packages/opencode \
+  ./src/index.ts serve --port 4096
+
+# Attach the TUI client in another terminal
+opencode attach http://localhost:4096
+
+# Or run the TUI under the debugger directly
+bun run --inspect=ws://localhost:6499/ --cwd packages/opencode \
+  --conditions=browser ./src/index.ts
+```
+
+`bun dev` runs the server in a worker thread, which can prevent
+breakpoints from binding. Use `bun dev spawn` to force a separate
+process, or run server and TUI separately as shown above.
+
+### Pitfalls
+
+- Skipping `bun install` — the `postinstall` step is required.
+- Using `npm`/`pnpm` instead of `bun` — breaks workspace and patches.
+- Calling `bun run packages/opencode/src/index.ts` without
+  `--conditions=browser` — fails to resolve `#pty` / `#hono` / `#db`.
+- A stale `packages/opencode/dist/` shadowing changes if you invoke
+  the dist binary instead of `bun dev`. Run `rm -rf packages/opencode/dist`
+  if in doubt.
+- Setting `OPENCODE_REPO` / `OPENCODE_NPM_PACKAGE` /
+  `OPENCODE_NPM_REGISTRY` for local dev — those are only consumed
+  by the fork release build. They do nothing for `bun dev`.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the upstream-flavored
+contributor docs (provider additions, PR rules, deeper debugger setup).
+
 ## Reference
 
 - [`docs/FORK_RELEASE_PIPELINE.md`](docs/FORK_RELEASE_PIPELINE.md) —
