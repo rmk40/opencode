@@ -19,6 +19,10 @@ In the project directory, you can run:
 Runs the app in the development mode.<br>
 Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
 
+The Vite dev server binds to `127.0.0.1` and does not configure `allowedHosts` or a dev proxy. Start an opencode backend separately when testing API-backed screens.
+
+The app root route (`/`) renders the native dashboard. The legacy home screen remains available at `/home`.
+
 The page will reload if you make edits.<br>
 
 ### `npm run build`
@@ -31,7 +35,7 @@ Your app is ready to be deployed!
 
 ## E2E Testing
 
-Playwright starts the Vite dev server automatically via `webServer`, and UI tests expect an opencode backend at `localhost:4096` by default.
+Playwright starts the loopback-only Vite dev server automatically via `webServer`, and UI tests expect an opencode backend at `localhost:4096` by default.
 
 ```bash
 bunx playwright install chromium

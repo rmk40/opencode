@@ -115,6 +115,22 @@ to the upstream package and silently downgrade you off the fork channel.
 If you see an auth error, your `~/.npmrc` token has expired or lacks
 `read:packages`; the upgrade command will tell you what to fix.
 
+## Web interface
+
+Run `opencode web` to start the local server and open the browser UI.
+The root route (`/`) opens the native dashboard, and the legacy home
+screen remains available at `/home`.
+
+By default, server commands bind to `127.0.0.1`. Set
+`OPENCODE_SERVER_PASSWORD` before binding to non-loopback hosts such as
+`0.0.0.0` or enabling mDNS. Pass `--allow-insecure-no-auth` (or set
+`server.allowInsecureNoAuth` in `opencode.json`) only when you
+intentionally accept unauthenticated network access.
+
+If embedded UI assets are missing or disabled with
+`OPENCODE_DISABLE_EMBEDDED_WEB_UI`, the server fails closed with a
+local 503 page; it does not proxy to the upstream hosted UI.
+
 ## Verify a release
 
 ```bash

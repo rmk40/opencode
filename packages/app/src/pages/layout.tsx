@@ -151,7 +151,7 @@ export default function Layout(props: ParentProps) {
   const currentDir = createMemo(() => route().dir)
 
   const [state, setState] = createStore({
-    autoselect: !initialDirectory,
+    autoselect: !initialDirectory && location.pathname !== "/",
     busyWorkspaces: {} as Record<string, boolean>,
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
@@ -1423,6 +1423,7 @@ export default function Layout(props: ParentProps) {
     if (!next) {
       layout.projects.close(directory)
       navigate("/")
+      layout.mobileSidebar.hide()
       return
     }
 
@@ -2344,7 +2345,10 @@ export default function Layout(props: ParentProps) {
       handleDragOver={handleDragOver}
       openProjectLabel={language.t("command.project.open")}
       openProjectKeybind={() => command.keybind("project.open")}
-      onOpenProject={chooseProject}
+      onOpenProject={() => {
+        navigate("/")
+        layout.mobileSidebar.hide()
+      }}
       renderProjectOverlay={projectOverlay}
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}

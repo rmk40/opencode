@@ -18,7 +18,7 @@ opencode web
 This starts a local server on `127.0.0.1` with a random available port and automatically opens OpenCode in your default browser.
 
 :::caution
-If `OPENCODE_SERVER_PASSWORD` is not set, the server will be unsecured. This is fine for local use but should be set for network access.
+Loopback web servers are allowed without a password for local use. Set `OPENCODE_SERVER_PASSWORD` before binding to a non-loopback host such as `0.0.0.0` or enabling mDNS.
 :::
 
 :::tip[Windows Users]
@@ -44,7 +44,7 @@ opencode web --port 4096
 By default, the server binds to `127.0.0.1` (localhost only). To make OpenCode accessible on your network:
 
 ```bash
-opencode web --hostname 0.0.0.0
+OPENCODE_SERVER_PASSWORD=secret opencode web --hostname 0.0.0.0
 ```
 
 When using `0.0.0.0`, OpenCode will display both local and network addresses:
@@ -63,6 +63,8 @@ opencode web --mdns
 ```
 
 This automatically sets the hostname to `0.0.0.0` and advertises the server as `opencode.local`.
+
+Because mDNS binds to the network, it also requires `OPENCODE_SERVER_PASSWORD` unless you intentionally pass `--allow-insecure-no-auth`.
 
 You can customize the mDNS domain name to run multiple instances on the same network:
 
@@ -87,6 +89,8 @@ OPENCODE_SERVER_PASSWORD=secret opencode web
 ```
 
 The username defaults to `opencode` but can be changed with `OPENCODE_SERVER_USERNAME`.
+
+For automation where unauthenticated network access is intentional, pass `--allow-insecure-no-auth` or set `server.allowInsecureNoAuth`. This exposes the server without authentication and should not be used on untrusted networks.
 
 ---
 
@@ -134,6 +138,7 @@ You can also configure server settings in your `opencode.json` config file:
     "port": 4096,
     "hostname": "0.0.0.0",
     "mdns": true,
+    "allowInsecureNoAuth": false,
     "cors": ["https://example.com"]
   }
 }

@@ -4,6 +4,7 @@ import { base64Encode } from "@opencode-ai/shared/util/encode"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { createEffect, createMemo, createResource, type ParentProps, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
+import { useLayout } from "@/context/layout"
 import { LocalProvider } from "@/context/local"
 import { SDKProvider } from "@/context/sdk"
 import { SyncProvider, useSync } from "@/context/sync"
@@ -43,12 +44,20 @@ function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
 export default function Layout(props: ParentProps) {
   const params = useParams()
   const language = useLanguage()
+  const layout = useLayout()
   const navigate = useNavigate()
   let invalid = ""
 
   const resolved = createMemo(() => {
     if (!params.dir) return ""
     return decode64(params.dir) ?? ""
+  })
+
+  createEffect(() => {
+    if (!layout.ready()) return
+    const dir = resolved()
+    if (!dir) return
+    layout.projects.open(dir)
   })
 
   createEffect(() => {

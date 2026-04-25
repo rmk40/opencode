@@ -20,7 +20,11 @@ If you need true isolation, run OpenCode inside a Docker container or VM.
 
 ### Server Mode
 
-Server mode is opt-in only. When enabled, set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth. Without this, the server runs unauthenticated (with a warning). It is the end user's responsibility to secure the server - any functionality it provides is not a vulnerability.
+Server mode is opt-in only. Loopback binds (`localhost`, `127.0.0.1`, and `::1`) may run unauthenticated for local development. Set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth.
+
+Non-loopback binds, including `0.0.0.0` and mDNS defaults, refuse to start without `OPENCODE_SERVER_PASSWORD`. Users can override this by passing `--allow-insecure-no-auth` or setting `server.allowInsecureNoAuth`.
+
+If a user opts into unauthenticated network access with `--allow-insecure-no-auth` or `server.allowInsecureNoAuth`, they are responsible for securing the server. Any functionality exposed by that server is expected behavior, not a vulnerability.
 
 ### Out of Scope
 
