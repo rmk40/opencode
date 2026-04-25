@@ -160,24 +160,27 @@ fork's monotonic suffix — once `aai.N` is published, it is never reused.
 ### What ships and what does not
 
 ```mermaid
-mindmap
-    root(("Fork pipeline scope"))
-        In scope
-            CLI binaries
-                "linux x64/arm64 (glibc and musl)"
-                "darwin x64 and arm64"
-                "windows x64 and arm64"
-                "baseline variants for older CPUs"
-            "GitHub Releases (prerelease)"
-            "GitHub Packages npm (@rmk40 scope)"
-            "Captured models.dev/api.json snapshot"
-        Out of scope
-            "npmjs (registry.npmjs.org)"
-            "Homebrew, AUR, Scoop, Chocolatey"
-            "Docker / GHCR images"
-            "Desktop app (Tauri / Electron)"
-            "Code signing / notarization"
-            "Updater channel promotion"
+flowchart LR
+    subgraph InScope["In scope"]
+        direction TB
+        I1["CLI binaries"]
+        I2["Linux x64 / arm64<br/>glibc and musl"]
+        I3["macOS x64 and arm64"]
+        I4["Windows x64 and arm64"]
+        I5["Baseline variants<br/>for older CPUs"]
+        I6["GitHub Releases<br/>prerelease only"]
+        I7["GitHub Packages npm<br/>@rmk40 scope"]
+        I8["Captured models.dev<br/>api.json snapshot"]
+    end
+    subgraph OutOfScope["Out of scope"]
+        direction TB
+        O1["npmjs<br/>registry.npmjs.org"]
+        O2["Homebrew, AUR,<br/>Scoop, Chocolatey"]
+        O3["Docker / GHCR images"]
+        O4["Desktop app<br/>Tauri / Electron"]
+        O5["Code signing<br/>and notarization"]
+        O6["Updater channel<br/>promotion"]
+    end
 ```
 
 If you need anything in the right column, that is a separate change.
