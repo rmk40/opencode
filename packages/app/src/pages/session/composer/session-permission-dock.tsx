@@ -4,6 +4,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { DockPrompt } from "@opencode-ai/ui/dock-prompt"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
+import { useDockMaxHeight } from "./use-dock-max-height"
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
@@ -11,6 +12,9 @@ export function SessionPermissionDock(props: {
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
   const language = useLanguage()
+  let root: HTMLDivElement | undefined
+
+  useDockMaxHeight({ property: "--permission-prompt-max-height", getRoot: () => root })
 
   const toolDescription = () => {
     const key = `settings.permissions.tool.${props.request.permission}.description`
@@ -22,6 +26,7 @@ export function SessionPermissionDock(props: {
   return (
     <DockPrompt
       kind="permission"
+      ref={(el) => (root = el)}
       header={
         <div data-slot="permission-row" data-variant="header">
           <span data-slot="permission-icon">

@@ -720,7 +720,10 @@
   flex-direction: column;
   gap: 0;
   min-height: 0;
-  max-height: 100dvh;
+  /* Default to 100dvh; SessionPermissionDock overrides this at runtime
+     via --permission-prompt-max-height to clamp against the visible
+     viewport on mobile (soft keyboard / URL bar). */
+  max-height: var(--permission-prompt-max-height, 100dvh);
 
   [data-slot="permission-body"] {
     display: flex;
