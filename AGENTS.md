@@ -13,6 +13,7 @@
 - Valid versions are constructed from `--upstream-version X.Y.Z` and `--suffix aai.N`, producing `X.Y.Z-aai.N`. The suffix regex is `^aai\.[1-9][0-9]*$`; leading-zero suffixes like `aai.01` are invalid.
 - Normal releases are tag-driven. Push a tag matching `vX.Y.Z-aai.N` from a commit reachable from `actualyze`; CI derives `upstream_version`, `suffix`, and `version` from the tag, builds artifacts, creates a published GitHub release, and publishes GitHub Packages with dist-tag `aai`.
 - The release channel is always `OPENCODE_CHANNEL=aai`. The script unsets `OPENCODE_BUMP`, `OPENCODE_RELEASE`, and `GH_REPO` before building to avoid upstream version/publish behavior.
+- The fork build also exports `OPENCODE_REPO=rmk40/opencode`, `OPENCODE_NPM_PACKAGE=@rmk40/opencode`, and `OPENCODE_NPM_REGISTRY=https://npm.pkg.github.com` before invoking `build.ts` so that `opencode upgrade` queries the fork rather than upstream npmjs.
 - The workflow is guarded for `github.repository == 'rmk40/opencode'`. Manual `workflow_dispatch` runs must originate from the `actualyze` branch; tag-triggered runs must use a tag matching `vX.Y.Z-aai.N` whose commit is reachable from `actualyze`.
 
 ### Fork Release Commands

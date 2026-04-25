@@ -162,6 +162,10 @@ const targets = singleFlag
     })
   : allTargets
 
+const forkRepo = process.env.OPENCODE_REPO ?? ""
+const forkNpmPackage = process.env.OPENCODE_NPM_PACKAGE ?? ""
+const forkNpmRegistry = process.env.OPENCODE_NPM_REGISTRY ?? ""
+
 await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
@@ -213,12 +217,15 @@ for (const item of targets) {
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
     entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : [])],
     define: {
-      OPENCODE_VERSION: `'${Script.version}'`,
+      OPENCODE_VERSION: JSON.stringify(Script.version),
       OPENCODE_MIGRATIONS: JSON.stringify(migrations),
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
       OPENCODE_WORKER_PATH: workerPath,
-      OPENCODE_CHANNEL: `'${Script.channel}'`,
-      OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
+      OPENCODE_CHANNEL: JSON.stringify(Script.channel),
+      OPENCODE_LIBC: JSON.stringify(item.os === "linux" ? (item.abi ?? "glibc") : ""),
+      OPENCODE_REPO: JSON.stringify(forkRepo),
+      OPENCODE_NPM_PACKAGE: JSON.stringify(forkNpmPackage),
+      OPENCODE_NPM_REGISTRY: JSON.stringify(forkNpmRegistry),
     },
   })
 

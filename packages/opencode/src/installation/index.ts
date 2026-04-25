@@ -10,7 +10,13 @@ import { Flag } from "../flag/flag"
 import { Log } from "../util"
 
 import semver from "semver"
-import { InstallationChannel, InstallationVersion } from "./version"
+import {
+  InstallationChannel,
+  InstallationNpmPackage,
+  InstallationNpmRegistry,
+  InstallationRepo,
+  InstallationVersion,
+} from "./version"
 
 const log = Log.create({ service: "installation" })
 
@@ -70,6 +76,9 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
 
 // Response schemas for external version APIs
 const GitHubRelease = Schema.Struct({ tag_name: Schema.String })
+const GitHubReleaseList = Schema.Array(
+  Schema.Struct({ tag_name: Schema.String, draft: Schema.Boolean, prerelease: Schema.Boolean }),
+)
 const NpmPackage = Schema.Struct({ version: Schema.String })
 const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })
 const BrewInfoV2 = Schema.Struct({
@@ -132,12 +141,38 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         Effect.catch(() => Effect.succeed({ code: ChildProcessSpawner.ExitCode(1), stdout: "", stderr: "" })),
       )
 
+      const registryArgs = (): string[] => (InstallationNpmRegistry ? [`--registry=${InstallationNpmRegistry}`] : [])
+
+      const npmAuthHint = (stderr: string): string => {
+        if (!InstallationNpmRegistry) return stderr
+        if (!/E401|401\s|EAUTHENTICATE|EUNAUTHENTICATE|Unauthorized|ENEEDAUTH|need.*auth|requires.*auth/i.test(stderr))
+          return stderr
+        if (!InstallationNpmPackage.startsWith("@")) return stderr
+        const scope = InstallationNpmPackage.split("/")[0]
+        let host: string
+        try {
+          host = new URL(InstallationNpmRegistry).host
+        } catch {
+          return stderr
+        }
+        return [
+          stderr,
+          "",
+          "GitHub Packages requires a GitHub token with read:packages scope.",
+          "Add the following to ~/.npmrc:",
+          `${scope}:registry=${InstallationNpmRegistry}`,
+          `//${host}/:_authToken=YOUR_GITHUB_TOKEN`,
+        ].join("\n")
+      }
+
       const viewVersion = Effect.fnUntraced(function* (method: "npm" | "pnpm" | "bun", spec: string) {
-        const args = method === "bun" ? ["pm", "view", spec, "version", "--json"] : ["view", spec, "version", "--json"]
+        const baseArgs =
+          method === "bun" ? ["pm", "view", spec, "version", "--json"] : ["view", spec, "version", "--json"]
+        const args = [...baseArgs, ...registryArgs()]
         const result = yield* run([method, ...args])
         if (result.code !== 0 || !result.stdout.trim()) {
           return yield* new UpgradeFailedError({
-            stderr: result.stderr || result.stdout || `Failed to resolve ${spec}`,
+            stderr: npmAuthHint(result.stderr || result.stdout || `Failed to resolve ${spec}`),
           })
         }
         return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String))(result.stdout)
@@ -174,11 +209,17 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       )
 
       const methodImpl = Effect.fn("Installation.method")(function* () {
-        if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl" as Method
-        if (process.execPath.includes(path.join(".local", "bin"))) return "curl" as Method
+        // Builds that publish to a custom npm registry (forks) cannot rely on
+        // the upstream curl installer. Treat .opencode/bin and .local/bin paths
+        // as curl only when the binary is upstream-published.
+        if (!InstallationNpmRegistry) {
+          if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl" as Method
+          if (process.execPath.includes(path.join(".local", "bin"))) return "curl" as Method
+        }
+
         const exec = process.execPath.toLowerCase()
 
-        const checks: Array<{ name: Method; command: () => Effect.Effect<string> }> = [
+        const allChecks: Array<{ name: Method; command: () => Effect.Effect<string> }> = [
           { name: "npm", command: () => text(["npm", "list", "-g", "--depth=0"]) },
           { name: "yarn", command: () => text(["yarn", "global", "list"]) },
           { name: "pnpm", command: () => text(["pnpm", "list", "-g", "--depth=0"]) },
@@ -187,6 +228,11 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           { name: "scoop", command: () => text(["scoop", "list", "opencode"]) },
           { name: "choco", command: () => text(["choco", "list", "--limit-output", "opencode"]) },
         ]
+        // Fork builds only ship through the configured npm registry. Skip
+        // detection paths that would resolve to upstream distribution channels.
+        const checks = InstallationNpmRegistry
+          ? allChecks.filter((c) => c.name !== "brew" && c.name !== "scoop" && c.name !== "choco")
+          : allChecks
 
         checks.sort((a, b) => {
           const aMatches = exec.includes(a.name)
@@ -199,7 +245,9 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         for (const check of checks) {
           const output = yield* check.command()
           const installedName =
-            check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+            check.name === "brew" || check.name === "choco" || check.name === "scoop"
+              ? "opencode"
+              : InstallationNpmPackage
           if (output.includes(installedName)) {
             return check.name
           }
@@ -228,7 +276,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
-          return yield* viewVersion(detectedMethod, `opencode-ai@${InstallationChannel}`)
+          return yield* viewVersion(detectedMethod, `${InstallationNpmPackage}@${InstallationChannel}`)
         }
 
         if (detectedMethod === "choco") {
@@ -251,8 +299,26 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return data.version
         }
 
+        // GitHub releases fallback. Channels other than "latest" only exist as
+        // prereleases, which /releases/latest excludes. List recent releases and
+        // pick the newest tag matching the configured channel pattern.
+        if (InstallationChannel !== "latest") {
+          const escapedChannel = InstallationChannel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          const channelPattern = new RegExp(`^v\\d+\\.\\d+\\.\\d+-${escapedChannel}\\.\\d+$`)
+          const listResponse = yield* httpOk.execute(
+            HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases?per_page=30`).pipe(
+              HttpClientRequest.acceptJson,
+            ),
+          )
+          const releases = yield* HttpClientResponse.schemaBodyJson(GitHubReleaseList)(listResponse)
+          const matching = releases.filter((r) => !r.draft && channelPattern.test(r.tag_name))
+          if (matching.length > 0) {
+            // GitHub returns releases newest-first; pick the first match.
+            return matching[0].tag_name.replace(/^v/, "")
+          }
+        }
         const response = yield* httpOk.execute(
-          HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
+          HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases/latest`).pipe(
             HttpClientRequest.acceptJson,
           ),
         )
@@ -261,19 +327,32 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       }, Effect.orDie)
 
       const upgradeImpl = Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
+        // target is interpolated into argv. cross-spawn does not invoke a shell,
+        // but a malformed target can confuse package manager argv parsing for
+        // scoop/choco. Reject anything that does not look like a SemVer or
+        // dist-tag identifier.
+        if (!/^[A-Za-z0-9._+-]+$/.test(target)) {
+          return yield* new UpgradeFailedError({ stderr: `invalid upgrade target: ${target}` })
+        }
+        const forkOnlyMethods = new Set<Method>(["brew", "choco", "scoop", "curl"])
+        if (InstallationNpmRegistry && forkOnlyMethods.has(m)) {
+          return yield* new UpgradeFailedError({
+            stderr: `${m} upgrades are not supported for builds published to ${InstallationNpmRegistry}. Reinstall with: npm install -g ${InstallationNpmPackage}@${target} --registry=${InstallationNpmRegistry}`,
+          })
+        }
         let result: { code: ChildProcessSpawner.ExitCode; stdout: string; stderr: string } | undefined
         switch (m) {
           case "curl":
             result = yield* upgradeCurl(target)
             break
           case "npm":
-            result = yield* run(["npm", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["npm", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
             break
           case "pnpm":
-            result = yield* run(["pnpm", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["pnpm", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
             break
           case "bun":
-            result = yield* run(["bun", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["bun", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
             break
           case "brew": {
             const formula = yield* getBrewFormula()
@@ -307,7 +386,8 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
             return yield* new UpgradeFailedError({ stderr: `Unknown method: ${m}` })
         }
         if (!result || result.code !== 0) {
-          const stderr = m === "choco" ? "not running from an elevated command shell" : result?.stderr || ""
+          const rawStderr = m === "choco" ? "not running from an elevated command shell" : result?.stderr || ""
+          const stderr = m === "npm" || m === "bun" || m === "pnpm" ? npmAuthHint(rawStderr) : rawStderr
           return yield* new UpgradeFailedError({ stderr })
         }
         log.info("upgraded", {

@@ -128,7 +128,7 @@ bun run release:fork -- build \
   --version "${VERSION}"
 ```
 
-The package script implementation must set `OPENCODE_VERSION`, `OPENCODE_CHANNEL`, and `MODELS_DEV_API_JSON` in the same process that runs `build.ts`, and `OPENCODE_BUMP` / `OPENCODE_RELEASE` must not be set at workflow, job, or step scope.
+The package script implementation must set `OPENCODE_VERSION`, `OPENCODE_CHANNEL`, `MODELS_DEV_API_JSON`, `OPENCODE_REPO`, `OPENCODE_NPM_PACKAGE`, and `OPENCODE_NPM_REGISTRY` in the same process that runs `build.ts`, and `OPENCODE_BUMP` / `OPENCODE_RELEASE` must not be set at workflow, job, or step scope. The repo/package/registry values are baked into the built binary so `opencode upgrade` queries the fork instead of upstream npmjs.
 
 `MODELS_DEV_API_JSON` is consumed by `packages/opencode/script/generate.ts`, which `build.ts` imports before compiling binaries. This is the contract that makes the captured snapshot, not a second live fetch, feed the generated model snapshot.
 

@@ -52,7 +52,11 @@ function testLayer(
 describe("installation", () => {
   describe("latest", () => {
     test("reads release version from GitHub releases", async () => {
-      const layer = testLayer(() => jsonResponse({ tag_name: "v1.2.3" }))
+      const layer = testLayer((request) => {
+        const url = request.url
+        if (url.includes("/releases?")) return jsonResponse([])
+        return jsonResponse({ tag_name: "v1.2.3" })
+      })
 
       const result = await Effect.runPromise(
         Installation.Service.use((svc) => svc.latest("unknown")).pipe(Effect.provide(layer)),
@@ -61,12 +65,55 @@ describe("installation", () => {
     })
 
     test("strips v prefix from GitHub release tag", async () => {
-      const layer = testLayer(() => jsonResponse({ tag_name: "v4.0.0-beta.1" }))
+      const layer = testLayer((request) => {
+        const url = request.url
+        if (url.includes("/releases?")) return jsonResponse([])
+        return jsonResponse({ tag_name: "v4.0.0-beta.1" })
+      })
 
       const result = await Effect.runPromise(
         Installation.Service.use((svc) => svc.latest("curl")).pipe(Effect.provide(layer)),
       )
       expect(result).toBe("4.0.0-beta.1")
+    })
+
+    test("prefers channel-matching prerelease from list endpoint", async () => {
+      // Tests run with InstallationChannel = "local" (default fallback).
+      // The "latest" channel skips list filtering; "local" exercises the filter.
+      const layer = testLayer((request) => {
+        const url = request.url
+        if (url.includes("/releases?per_page=30")) {
+          return jsonResponse([
+            { tag_name: "v1.2.3-other.1", draft: false, prerelease: true },
+            { tag_name: `v9.8.7-${InstallationChannel}.2`, draft: false, prerelease: true },
+            { tag_name: `v9.8.7-${InstallationChannel}.1`, draft: false, prerelease: true },
+          ])
+        }
+        return jsonResponse({ tag_name: "v0.0.0" })
+      })
+
+      const result = await Effect.runPromise(
+        Installation.Service.use((svc) => svc.latest("curl")).pipe(Effect.provide(layer)),
+      )
+      expect(result).toBe(`9.8.7-${InstallationChannel}.2`)
+    })
+
+    test("ignores draft releases when filtering by channel", async () => {
+      const layer = testLayer((request) => {
+        const url = request.url
+        if (url.includes("/releases?per_page=30")) {
+          return jsonResponse([
+            { tag_name: `v9.9.9-${InstallationChannel}.5`, draft: true, prerelease: true },
+            { tag_name: `v1.0.0-${InstallationChannel}.1`, draft: false, prerelease: true },
+          ])
+        }
+        return jsonResponse({ tag_name: "v0.0.0" })
+      })
+
+      const result = await Effect.runPromise(
+        Installation.Service.use((svc) => svc.latest("curl")).pipe(Effect.provide(layer)),
+      )
+      expect(result).toBe(`1.0.0-${InstallationChannel}.1`)
     })
 
     test("reads npm versions via npm view", async () => {

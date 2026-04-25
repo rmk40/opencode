@@ -324,9 +324,15 @@ build_cmd() {
   export OPENCODE_VERSION="$VERSION"
   export OPENCODE_CHANNEL="$CHANNEL"
   export MODELS_DEV_API_JSON="$WORKDIR/models.dev-api.json"
+  export OPENCODE_REPO="$TARGET_REPO"
+  export OPENCODE_NPM_PACKAGE="$(npm_package_name opencode)"
+  export OPENCODE_NPM_REGISTRY="$NPM_REGISTRY"
 
   [ "$OPENCODE_VERSION" = "$VERSION" ] || die "OPENCODE_VERSION was not set"
   [ "$OPENCODE_CHANNEL" = "$CHANNEL" ] || die "OPENCODE_CHANNEL was not set"
+  [ -n "$OPENCODE_REPO" ] || die "OPENCODE_REPO was not set"
+  [ -n "$OPENCODE_NPM_PACKAGE" ] || die "OPENCODE_NPM_PACKAGE was not set"
+  [ -n "$OPENCODE_NPM_REGISTRY" ] || die "OPENCODE_NPM_REGISTRY was not set"
   [ -z "${OPENCODE_BUMP:-}" ] || die "OPENCODE_BUMP must be unset"
   [ -z "${OPENCODE_RELEASE:-}" ] || die "OPENCODE_RELEASE must be unset"
 
