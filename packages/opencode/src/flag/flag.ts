@@ -75,6 +75,11 @@ export const Flag = {
   OPENCODE_MODELS_URL: process.env["OPENCODE_MODELS_URL"],
   OPENCODE_MODELS_PATH: process.env["OPENCODE_MODELS_PATH"],
   OPENCODE_DISABLE_EMBEDDED_WEB_UI: truthy("OPENCODE_DISABLE_EMBEDDED_WEB_UI"),
+  // Source-mode web UI fallback: when set, the UI catch-all route serves
+  // assets from this directory instead of the build-time embedded module.
+  // Production binaries leave this unset and continue to fail closed when
+  // embedded assets are unavailable.
+  OPENCODE_WEB_UI_DIR: process.env["OPENCODE_WEB_UI_DIR"],
   OPENCODE_DB: process.env["OPENCODE_DB"],
   OPENCODE_DISABLE_CHANNEL_DB: truthy("OPENCODE_DISABLE_CHANNEL_DB"),
   OPENCODE_SKIP_MIGRATIONS: truthy("OPENCODE_SKIP_MIGRATIONS"),
