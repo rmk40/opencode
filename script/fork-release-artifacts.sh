@@ -7,11 +7,15 @@ cd "$ROOT"
 TARGET_REPO="rmk40/opencode"
 TARGET_BRANCH="actualyze"
 CHANNEL="aai"
+NPM_SCOPE="@rmk40"
+NPM_REGISTRY="https://npm.pkg.github.com"
 WORKDIR="${FORK_RELEASE_WORKDIR:-${RUNNER_TEMP:-$ROOT/.scripts}/fork-release}"
 DIST_DIR="${FORK_RELEASE_DIST_DIR:-packages/opencode/dist}"
 METADATA_DIR="$WORKDIR/release-metadata"
 ASSET_DIR="$WORKDIR/release-assets"
 DIST_BUNDLE="$WORKDIR/opencode-cli-dist.tar"
+NPM_DIR="$WORKDIR/npm-packages"
+NPM_TARBALL_DIR="$WORKDIR/npm-tarballs"
 
 EXPECTED_ARTIFACTS=(
   opencode-darwin-arm64
@@ -40,7 +44,7 @@ SUFFIX="${SUFFIX:-}"
 VERSION="${VERSION:-}"
 
 usage() {
-  printf '%s\n' "usage: bun run release:fork -- <validate|build|package|release|self-test> [--upstream-version X.Y.Z] [--suffix aai.N] [--version X.Y.Z-aai.N]"
+  printf '%s\n' "usage: bun run release:fork -- <validate|build|package|release|npm-package|npm-publish|self-test> [--upstream-version X.Y.Z] [--suffix aai.N] [--version X.Y.Z-aai.N]"
 }
 
 die() {
@@ -176,6 +180,14 @@ hash_file() {
     return
   fi
   shasum -a 256 "$1" | cut -d ' ' -f 1
+}
+
+npm_package_name() {
+  printf '%s/%s\n' "$NPM_SCOPE" "$1"
+}
+
+npm_safe_filename() {
+  printf '%s\n' "${1#@}" | tr '/' '-'
 }
 
 validate_artifacts() {
@@ -388,13 +400,18 @@ check_release_available() {
 }
 
 package_cmd() {
+  local metadata_version snapshot_asset snapshot_hash actual_snapshot_hash
   validate_context
   if [ ! -f "$DIST_BUNDLE" ] && [ "${FORK_RELEASE_ALLOW_LOCAL_DIST:-}" != "1" ]; then
     die "$DIST_BUNDLE is required for package; set FORK_RELEASE_ALLOW_LOCAL_DIST=1 to package an existing local dist"
   fi
   restore_dist_bundle
   [ -f "$METADATA_DIR/metadata.json" ] || die "$METADATA_DIR/metadata.json is missing"
-  VERSION="$(metadata_value version)"
+  metadata_version="$(metadata_value version)"
+  if [ -n "$VERSION" ] && [ "$VERSION" != "$metadata_version" ]; then
+    die "requested version $VERSION does not match metadata version $metadata_version"
+  fi
+  VERSION="$metadata_version"
   UPSTREAM_VERSION="$(metadata_value upstream_version)"
   SUFFIX="$(metadata_value suffix)"
   validate_version
@@ -402,7 +419,6 @@ package_cmd() {
   normalize_windows_artifacts
   validate_artifact_contents
 
-  local snapshot_asset snapshot_hash actual_snapshot_hash
   snapshot_asset="$(metadata_value models_snapshot_asset)"
   snapshot_hash="$(metadata_value models_snapshot_sha256)"
   [ -f "$METADATA_DIR/$snapshot_asset" ] || die "$METADATA_DIR/$snapshot_asset is missing"
@@ -441,6 +457,129 @@ package_cmd() {
   find "$ASSET_DIR" -maxdepth 1 -type f \( -name 'opencode-*.zip' -o -name 'opencode-*.tar.gz' -o -name 'models.dev-api.*.json' \) -exec basename {} \; | sort | while IFS= read -r file; do
     printf '%s  %s\n' "$(hash_file "$ASSET_DIR/$file")" "$file"
   done > "$ASSET_DIR/SHA256SUMS"
+}
+
+npm_stage_packages() {
+  validate_context
+  if [ ! -f "$DIST_BUNDLE" ] && [ "${FORK_RELEASE_ALLOW_LOCAL_DIST:-}" != "1" ]; then
+    die "$DIST_BUNDLE is required for npm-package; set FORK_RELEASE_ALLOW_LOCAL_DIST=1 to package an existing local dist"
+  fi
+  restore_dist_bundle
+  [ -f "$METADATA_DIR/metadata.json" ] || die "$METADATA_DIR/metadata.json is missing"
+  local metadata_version
+  metadata_version="$(metadata_value version)"
+  if [ -n "$VERSION" ] && [ "$VERSION" != "$metadata_version" ]; then
+    die "requested version $VERSION does not match metadata version $metadata_version"
+  fi
+  VERSION="$metadata_version"
+  UPSTREAM_VERSION="$(metadata_value upstream_version)"
+  SUFFIX="$(metadata_value suffix)"
+  validate_version
+  validate_artifacts
+  normalize_windows_artifacts
+  validate_artifact_contents
+
+  rm -rf "$NPM_DIR" "$NPM_TARBALL_DIR"
+  mkdir -p "$NPM_DIR" "$NPM_TARBALL_DIR"
+
+  local optional_deps package_dirs artifact package_name package_dir src_pkg os_value cpu_value binary_name
+  optional_deps="{}"
+  package_dirs=()
+  while IFS= read -r dir; do
+    artifact="$(basename "$dir")"
+    package_name="$(npm_package_name "$artifact")"
+    package_dir="$NPM_DIR/$artifact"
+    src_pkg="$dir/package.json"
+    [ -f "$src_pkg" ] || die "$artifact is missing package.json"
+    os_value="$(jq -r '.os[0] // empty' "$src_pkg")"
+    cpu_value="$(jq -r '.cpu[0] // empty' "$src_pkg")"
+    [ -n "$os_value" ] || die "$artifact package.json is missing os"
+    [ -n "$cpu_value" ] || die "$artifact package.json is missing cpu"
+    mkdir -p "$package_dir/bin"
+    case "$artifact" in
+      opencode-windows-*) binary_name="opencode.exe" ;;
+      *) binary_name="opencode" ;;
+    esac
+    cp "$dir/bin/$binary_name" "$package_dir/bin/$binary_name"
+    chmod 755 "$package_dir/bin/$binary_name" 2>/dev/null || true
+    cp LICENSE "$package_dir/LICENSE"
+    jq -n \
+      --arg name "$package_name" \
+      --arg version "$VERSION" \
+      --arg os "$os_value" \
+      --arg cpu "$cpu_value" \
+      --arg registry "$NPM_REGISTRY" \
+      '{name:$name,version:$version,license:"MIT",os:[$os],cpu:[$cpu],repository:{type:"git",url:"git+https://github.com/rmk40/opencode.git"},publishConfig:{registry:$registry}}' \
+      > "$package_dir/package.json"
+    optional_deps="$(printf '%s\n' "$optional_deps" | jq --arg name "$package_name" --arg version "$VERSION" '. + {($name): $version}')"
+    package_dirs+=("$package_dir")
+  done < <(find "$DIST_DIR" -maxdepth 1 -mindepth 1 -type d -name 'opencode-*' | sort)
+
+  package_name="$(npm_package_name opencode)"
+  package_dir="$NPM_DIR/opencode"
+  mkdir -p "$package_dir/bin"
+  cp packages/opencode/bin/opencode "$package_dir/bin/opencode"
+  cp packages/opencode/script/postinstall.mjs "$package_dir/postinstall.mjs"
+  cp LICENSE "$package_dir/LICENSE"
+  chmod 755 "$package_dir/bin/opencode"
+  jq -n \
+    --arg name "$package_name" \
+    --arg version "$VERSION" \
+    --arg registry "$NPM_REGISTRY" \
+    --argjson optionalDependencies "$optional_deps" \
+    '{name:$name,version:$version,license:"MIT",bin:{opencode:"./bin/opencode"},scripts:{postinstall:"node ./postinstall.mjs"},optionalDependencies:$optionalDependencies,repository:{type:"git",url:"git+https://github.com/rmk40/opencode.git"},publishConfig:{registry:$registry}}' \
+    > "$package_dir/package.json"
+  package_dirs+=("$package_dir")
+
+  rm -f "$WORKDIR/npm-packages.txt"
+  for package_dir in "${package_dirs[@]}"; do
+    npm pack "$package_dir" --dry-run --json --ignore-scripts --registry "$NPM_REGISTRY" > "$WORKDIR/$(basename "$package_dir")-pack-dry-run.json"
+    npm pack "$package_dir" --pack-destination "$NPM_TARBALL_DIR" --ignore-scripts --registry "$NPM_REGISTRY" >/dev/null
+    jq -r '.name + "@" + .version' "$package_dir/package.json" >> "$WORKDIR/npm-packages.txt"
+  done
+}
+
+npm_package_exists() {
+  local package_name package_version log_file
+  package_name="$1"
+  package_version="$2"
+  log_file="$WORKDIR/npm-view-$(npm_safe_filename "$package_name")-$package_version.log"
+  if npm view "$package_name@$package_version" version --registry "$NPM_REGISTRY" > "$log_file" 2>&1; then
+    return 0
+  fi
+  if grep -Eq 'E404|404 Not Found|ETARGET|notarget|No matching version found' "$log_file"; then
+    return 1
+  fi
+  cat "$log_file" >&2
+  die "npm preflight failed for $package_name@$package_version"
+}
+
+npm_publish_cmd() {
+  validate_context
+  [ -n "${NODE_AUTH_TOKEN:-}" ] || die "NODE_AUTH_TOKEN is required for GitHub Packages publish"
+  npm_stage_packages
+
+  local package package_name package_version tarball
+  while IFS= read -r package; do
+    package_name="${package%@*}"
+    package_version="${package##*@}"
+    if npm_package_exists "$package_name" "$package_version"; then
+      die "$package_name@$package_version already exists in $NPM_REGISTRY"
+    fi
+  done < "$WORKDIR/npm-packages.txt"
+
+  local wrapper_tarball
+  wrapper_tarball="$NPM_TARBALL_DIR/$(npm_safe_filename "$(npm_package_name opencode)")-$VERSION.tgz"
+  [ -f "$wrapper_tarball" ] || die "wrapper tarball is missing: $wrapper_tarball"
+  find "$NPM_TARBALL_DIR" -maxdepth 1 -type f -name '*.tgz' | sort | while IFS= read -r tarball; do
+    [ "$tarball" = "$wrapper_tarball" ] && continue
+    npm publish "$tarball" --ignore-scripts --registry "$NPM_REGISTRY" --tag "$CHANNEL"
+  done
+
+  npm publish "$wrapper_tarball" --ignore-scripts --registry "$NPM_REGISTRY" --tag "$CHANNEL"
+
+  npm view "$(npm_package_name opencode)@$CHANNEL" version --registry "$NPM_REGISTRY" | grep -F "$VERSION"
+  npm view "$(npm_package_name opencode)@$VERSION" optionalDependencies --json --registry "$NPM_REGISTRY" | jq -e 'length > 0' >/dev/null
 }
 
 release_notes() {
@@ -519,9 +658,24 @@ self_test_cmd() {
   printf '%s\n' "${EXPECTED_ARTIFACTS[@]}" | while IFS= read -r artifact; do
     mkdir -p "$tmp/dist/$artifact/bin"
     case "$artifact" in
-      opencode-windows-*) printf 'fake windows binary\n' > "$tmp/dist/$artifact/bin/opencode.exe" ;;
-      *) printf '#!/usr/bin/env bash\nprintf '\''opencode 1.2.3-aai.4\\n'\''\n' > "$tmp/dist/$artifact/bin/opencode" ;;
+      opencode-windows-*)
+        printf 'fake windows binary\n' > "$tmp/dist/$artifact/bin/opencode.exe"
+        os_value="win32"
+        ;;
+      opencode-darwin-*)
+        printf '#!/usr/bin/env bash\nprintf '\''opencode 1.2.3-aai.4\\n'\''\n' > "$tmp/dist/$artifact/bin/opencode"
+        os_value="darwin"
+        ;;
+      *)
+        printf '#!/usr/bin/env bash\nprintf '\''opencode 1.2.3-aai.4\\n'\''\n' > "$tmp/dist/$artifact/bin/opencode"
+        os_value="linux"
+        ;;
     esac
+    case "$artifact" in
+      *-arm64*) cpu_value="arm64" ;;
+      *) cpu_value="x64" ;;
+    esac
+    jq -n --arg name "$artifact" --arg version 1.2.3-aai.4 --arg os "$os_value" --arg cpu "$cpu_value" '{name:$name,version:$version,os:[$os],cpu:[$cpu]}' > "$tmp/dist/$artifact/package.json"
   done
   chmod 755 "$tmp"/dist/opencode-{darwin,linux}-*/bin/opencode
 
@@ -571,6 +725,37 @@ self_test_cmd() {
   [ "$(find "$tmp/work/release-assets" -maxdepth 1 -type f \( -name 'opencode-*.zip' -o -name 'opencode-*.tar.gz' \) | wc -l | tr -d ' ')" = "12" ] || die "self-test package did not create all platform assets"
   grep -F "models.dev-api.${snapshot_hash}.json" "$tmp/work/release-assets/SHA256SUMS" >/dev/null || die "self-test package did not checksum models snapshot"
 
+  GITHUB_REPOSITORY="$TARGET_REPO" \
+  GITHUB_REF_NAME="$TARGET_BRANCH" \
+  FORK_RELEASE_WORKDIR="$tmp/work" \
+  FORK_RELEASE_DIST_DIR="$tmp/dist" \
+  FORK_RELEASE_ALLOW_LOCAL_DIST=1 \
+    bash "$ROOT/script/fork-release-artifacts.sh" npm-package
+
+  [ "$(find "$tmp/work/npm-tarballs" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')" = "13" ] || die "self-test npm-package did not create all npm tarballs"
+  [ -f "$tmp/work/npm-tarballs/rmk40-opencode-1.2.3-aai.4.tgz" ] || die "self-test npm-package did not create wrapper tarball"
+  jq -e '
+    .name == "@rmk40/opencode" and
+    .version == "1.2.3-aai.4" and
+    .publishConfig.registry == "https://npm.pkg.github.com" and
+    (.optionalDependencies | length == 12) and
+    (.optionalDependencies | to_entries | all(.key | startswith("@rmk40/opencode-"))) and
+    (.optionalDependencies | to_entries | all(.value == "1.2.3-aai.4"))
+  ' "$tmp/work/npm-packages/opencode/package.json" >/dev/null || die "self-test wrapper package metadata is invalid"
+  jq -e '.name == "@rmk40/opencode-windows-x64" and .os == ["win32"] and .cpu == ["x64"]' "$tmp/work/npm-packages/opencode-windows-x64/package.json" >/dev/null || die "self-test windows package metadata is invalid"
+  [ -f "$tmp/work/npm-packages/opencode-windows-x64/bin/opencode.exe" ] || die "self-test windows package is missing opencode.exe"
+  jq -e '.name == "@rmk40/opencode-linux-arm64-musl" and .os == ["linux"] and .cpu == ["arm64"]' "$tmp/work/npm-packages/opencode-linux-arm64-musl/package.json" >/dev/null || die "self-test linux musl package metadata is invalid"
+
+  if GITHUB_REPOSITORY="$TARGET_REPO" \
+    GITHUB_REF_NAME="$TARGET_BRANCH" \
+    FORK_RELEASE_WORKDIR="$tmp/work" \
+    FORK_RELEASE_DIST_DIR="$tmp/dist" \
+    FORK_RELEASE_ALLOW_LOCAL_DIST=1 \
+      bash "$ROOT/script/fork-release-artifacts.sh" npm-package --version 9.9.9-aai.9 > "$tmp/npm-version-mismatch.log" 2>&1; then
+    die "self-test npm-package version mismatch unexpectedly passed"
+  fi
+  grep -F 'does not match metadata version' "$tmp/npm-version-mismatch.log" >/dev/null || die "self-test npm-package version mismatch did not explain failure"
+
   printf '%s\n' "fork release artifact self-test passed"
 }
 
@@ -579,6 +764,8 @@ case "$COMMAND" in
   build) build_cmd ;;
   package) package_cmd ;;
   release) release_cmd ;;
+  npm-package) npm_stage_packages ;;
+  npm-publish) npm_publish_cmd ;;
   self-test) self_test_cmd ;;
   *)
     usage >&2

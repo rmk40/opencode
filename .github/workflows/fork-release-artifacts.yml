@@ -17,6 +17,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_npm:
+        description: Publish scoped npm packages to GitHub Packages
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -106,4 +111,44 @@ jobs:
           VERSION: ${{ needs.build-cli.outputs.version }}
         run: >-
           bun run release:fork -- release
+          --version "$VERSION"
+
+  publish-npm:
+    name: publish GitHub Packages npm packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-cli
+    if: ${{ inputs.publish_npm }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://npm.pkg.github.com
+          scope: "@rmk40"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opencode-cli-dist
+          path: ${{ runner.temp }}/fork-release
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opencode-build-metadata
+          path: ${{ runner.temp }}/fork-release/release-metadata
+
+      - name: Publish GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-cli.outputs.version }}
+        run: >-
+          bun run release:fork -- npm-publish
           --version "$VERSION"

@@ -2,13 +2,13 @@
 
 ## Goal
 
-Create a fork-local GitHub Actions pipeline for `rmk40/opencode` that can reliably build OpenCode release artifacts before adding any npm publishing, Homebrew, AUR, GHCR, signing, notarization, or updater promotion.
+Create a fork-local GitHub Actions pipeline for `rmk40/opencode` that can reliably build OpenCode release artifacts and optionally publish scoped GitHub Packages npm packages before adding npmjs publishing, Homebrew, AUR, GHCR, signing, notarization, or updater promotion.
 
 The first working version should answer one question: can the fork build the same core artifacts inside GitHub Actions in a repeatable way from the `actualyze` release branch?
 
 Artifacts should be built in GitHub Actions, not prebuilt locally and uploaded. Upload steps only persist the build outputs from the same workflow run, either as Actions artifacts or draft release assets.
 
-Only phases 1 and 2 are in scope for the foreseeable future. Desktop artifacts, signing, updater promotion, npm packaging, Docker/GHCR, Homebrew, and AUR remain explicitly deferred.
+Only phases 1, 2, and fork-local GitHub Packages npm publishing are in scope for the foreseeable future. Desktop artifacts, signing, updater promotion, npmjs publishing, Docker/GHCR, Homebrew, and AUR remain explicitly deferred.
 
 ## Current State
 
@@ -30,7 +30,7 @@ That workflow should be left intact. The fork should add a separate artifact-onl
 Add a reusable shell implementation plus a thin workflow. The canonical entry point is the root `package.json` script:
 
 ```bash
-bun run release:fork -- <validate|build|package|release|self-test> [...args]
+bun run release:fork -- <validate|build|package|release|npm-package|npm-publish|self-test> [...args]
 ```
 
 The root `package.json` script is the only supported public entry point. The workflow and manual operators should both call `bun run release:fork -- ...`; they should not invoke `script/fork-release-artifacts.sh` or `packages/opencode/script/build.ts` directly. The shell file remains an implementation detail behind the package script so CI and manual usage share the same interface.
@@ -50,6 +50,10 @@ on:
         required: true
         type: string
       create_release:
+        required: false
+        type: boolean
+        default: false
+      publish_npm:
         required: false
         type: boolean
         default: false
@@ -339,9 +343,58 @@ If `https://models.dev/api.json` is unreachable after retries, fail the workflow
 
 Audit `OPENCODE_CHANNEL` consumers during implementation before creating or sharing the first draft release. The expected phase 1/2 impact is updater-channel selection, but any additional channel-gated behavior should be documented before broader use.
 
-This still should not publish npm, Homebrew, AUR, GHCR, or desktop updater metadata.
+This still should not publish npmjs, Homebrew, AUR, GHCR, or desktop updater metadata.
 
-## Phase 3: Desktop Artifacts, Unsigned First
+## Phase 3: GitHub Packages npm Publishing
+
+After CLI artifacts are reliable, optionally publish scoped npm packages to GitHub Packages. This is for internal/private npm-style installs and intentionally does not publish to npmjs.
+
+Use package names under the current fork owner scope:
+
+- Wrapper package: `@rmk40/opencode`
+- Platform packages: `@rmk40/opencode-darwin-arm64`, `@rmk40/opencode-linux-x64`, and so on for every `packages/opencode/dist/opencode-*` artifact.
+
+The workflow input is `publish_npm`, defaulting to `false`. The npm job must depend on the build job and consume only the phase 1 `opencode-cli-dist.tar` and metadata artifacts. It must call `npm-publish`, which stages tarballs before publishing. It must not invoke `packages/opencode/script/build.ts`, must not use local prebuilt artifacts, and must not publish to npmjs.
+
+The package-script interface is:
+
+```bash
+bun run release:fork -- npm-package --version 1.14.24-aai.2
+bun run release:fork -- npm-publish --version 1.14.24-aai.2
+```
+
+`npm-package` should restore and validate `opencode-cli-dist.tar`, stage package directories under `${RUNNER_TEMP}/fork-release/npm-packages`, and write tarballs under `${RUNNER_TEMP}/fork-release/npm-tarballs`. Platform packages preserve each artifact's generated `os` and `cpu` metadata. The wrapper `@rmk40/opencode` keeps the `opencode` bin name and exact-version `optionalDependencies` on all scoped platform packages.
+
+`npm-publish` should require `NODE_AUTH_TOKEN`, preflight every `@rmk40/*@${VERSION}` with `npm view --registry https://npm.pkg.github.com`, fail before publishing anything if any package already exists, publish platform packages first, publish `@rmk40/opencode` last, apply the `aai` dist-tag, and verify `@rmk40/opencode@aai` resolves to the requested version.
+
+If publishing partially fails after some platform packages are published, do not rerun with the same version. GitHub Packages package versions are immutable; bump the suffix, rebuild from CI, and publish a new version.
+
+Workflow permissions for the npm job:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+```
+
+Use `actions/setup-node@v4` with `registry-url: https://npm.pkg.github.com` and `scope: "@rmk40"`. Set `NODE_AUTH_TOKEN: ${{ github.token }}` only on the publish step. The package scope should remain `@rmk40` until explicitly moved to another GitHub org scope.
+
+Consumers install with:
+
+```bash
+npm install -g @rmk40/opencode@aai --registry=https://npm.pkg.github.com
+```
+
+Most consumers need a GitHub token in `.npmrc` for GitHub Packages:
+
+```ini
+@rmk40:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
+```
+
+The CLI wrapper and `postinstall.mjs` must resolve platform packages from the wrapper package's `optionalDependencies` rather than hardcoding unscoped names. This lets the same wrapper work with scoped GitHub Packages now and a different org scope later.
+
+## Phase 4: Desktop Artifacts, Unsigned First
 
 Once CLI artifacts are reliable, add desktop artifact jobs. Keep signing disabled at first.
 
@@ -373,7 +426,7 @@ npx electron-builder --linux --publish never --config electron-builder.config.ts
 
 Then add Windows and macOS once unsigned build behavior is confirmed.
 
-## Phase 4: Signing And Promotion
+## Phase 5: Signing And Promotion
 
 Only after unsigned artifacts are reliable:
 
@@ -384,16 +437,16 @@ Only after unsigned artifacts are reliable:
 - Add release note generation.
 - Add tag creation and version sync automation.
 
-## Phase 5: npm Packaging
+## Phase 6: npmjs Publishing
 
-Do not start npm work until artifact production is reliable.
+Do not start npmjs publishing until GitHub Packages installs are proven.
 
-When ready, design npm packaging around the artifact outputs:
+When ready, adapt the GitHub Packages layout around the same artifact outputs:
 
 - Wrapper package installs the `opencode` binary.
 - Platform binary packages are optional dependencies.
-- Package naming can be decided later.
-- Trusted publishing via npm OIDC can be added after package contents are verified with `npm pack --dry-run`.
+- Package naming should move to the intended public npmjs scope.
+- Trusted publishing via npm OIDC can be added after package contents are verified with GitHub Packages.
 
 ## Implementation Notes
 
@@ -403,19 +456,19 @@ When ready, design npm packaging around the artifact outputs:
 - Keep `actualyze` as a long-lived branch and merge upstream `dev` into it as needed.
 - Use the repo's `.github/actions/setup-bun` where possible because it follows `packageManager` from root `package.json`.
 - Avoid GitHub App token setup in the first pass; `GITHUB_TOKEN` is sufficient for workflow artifacts and draft releases in the same repo.
-- Avoid `script/publish.ts` in early phases because it publishes npm packages, Docker images, Homebrew tap changes, AUR updates, and release finalization.
+- Avoid upstream `script/publish.ts` because it publishes npmjs packages, Docker images, Homebrew tap changes, AUR updates, and release finalization. Fork GitHub Packages publishing must stay in `script/fork-release-artifacts.sh`.
 - Expect `build.ts` to reach the network for cross-target optional dependencies via `bun install --os="*" --cpu="*"`; registry outages should fail the workflow rather than producing partial artifacts.
 - Phase 2 must read only the phase 1 artifact bundle and metadata artifact. It must not rebuild from the working tree or a fresh `packages/opencode/dist/`.
 
 ## First Concrete PR Scope
 
-The first PR should contain only:
+The first artifact-pipeline PR should contain only:
 
 - `.github/workflows/fork-release-artifacts.yml`
 - `script/fork-release-artifacts.sh`
 - The root `package.json` script that exposes `script/fork-release-artifacts.sh` as `bun run release:fork -- ...`
 
-It should not modify npm package names, binary names, desktop signing config, release scripts, or updater config.
+GitHub Packages support may add scoped `@rmk40` package metadata and wrapper resolution changes, but should not modify desktop signing config, upstream publish scripts, or updater config.
 
 It can include both phase 1 and phase 2 in one workflow if phase 2 is strictly gated behind `create_release`. This keeps the implementation practical while preserving the artifact-only default path.
 

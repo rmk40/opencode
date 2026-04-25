@@ -24,8 +24,15 @@ if (envPath) {
 
 const scriptPath = fs.realpathSync(__filename)
 const scriptDir = path.dirname(scriptPath)
+const packageDir = path.dirname(scriptDir)
+const optionalDependencies = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8")).optionalDependencies || {}
+  } catch {
+    return {}
+  }
+})()
 
-//
 const cached = path.join(scriptDir, ".opencode")
 if (fs.existsSync(cached)) {
   run(cached)
@@ -148,12 +155,35 @@ const names = (() => {
   return [base]
 })()
 
+function packageBase(name) {
+  const parts = name.split("/")
+  return parts[parts.length - 1]
+}
+
+const packageNames = (() => {
+  const optionalNames = Object.keys(optionalDependencies)
+  return names.flatMap((name) => {
+    const scoped = optionalNames.filter((item) => packageBase(item) === name)
+    return scoped.length ? scoped : [name]
+  })
+})()
+
 function findBinary(startDir) {
+  for (const name of packageNames) {
+    try {
+      const packageJson = require.resolve(path.join(name, "package.json"), { paths: [startDir] })
+      const candidate = path.join(path.dirname(packageJson), "bin", binary)
+      if (fs.existsSync(candidate)) return candidate
+    } catch {
+      // Fall back to walking ancestors for package managers with unusual layouts.
+    }
+  }
+
   let current = startDir
   for (;;) {
     const modules = path.join(current, "node_modules")
     if (fs.existsSync(modules)) {
-      for (const name of names) {
+      for (const name of packageNames) {
         const candidate = path.join(modules, name, "bin", binary)
         if (fs.existsSync(candidate)) return candidate
       }
@@ -170,7 +200,7 @@ const resolved = findBinary(scriptDir)
 if (!resolved) {
   console.error(
     "It seems that your package manager failed to install the right version of the opencode CLI for your platform. You can try manually installing " +
-      names.map((n) => `\"${n}\"`).join(" or ") +
+      packageNames.map((n) => `\"${n}\"`).join(" or ") +
       " package",
   )
   process.exit(1)
