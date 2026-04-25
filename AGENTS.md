@@ -11,8 +11,9 @@
 - The implementation files are `.github/workflows/fork-release-artifacts.yml`, `script/fork-release-artifacts.sh`, the root `package.json` `release:fork` script, and `RELEASE_ARTIFACT_PIPELINE_PLAN.md`.
 - The canonical interface is the root package script. CI and manual runs should call `bun run release:fork -- <validate|build|package|release|npm-package|npm-publish|self-test> ...`; do not call `script/fork-release-artifacts.sh` or `packages/opencode/script/build.ts` directly in docs/workflows.
 - Valid versions are constructed from `--upstream-version X.Y.Z` and `--suffix aai.N`, producing `X.Y.Z-aai.N`. The suffix regex is `^aai\.[1-9][0-9]*$`; leading-zero suffixes like `aai.01` are invalid.
+- Normal releases are tag-driven. Push a tag matching `vX.Y.Z-aai.N` from a commit reachable from `actualyze`; CI derives `upstream_version`, `suffix`, and `version` from the tag, builds artifacts, creates a published GitHub release, and publishes GitHub Packages with dist-tag `aai`.
 - The release channel is always `OPENCODE_CHANNEL=aai`. The script unsets `OPENCODE_BUMP`, `OPENCODE_RELEASE`, and `GH_REPO` before building to avoid upstream version/publish behavior.
-- The workflow is guarded for `github.repository == 'rmk40/opencode'`, `github.ref_name == 'actualyze'`, and branch refs (`refs/heads/actualyze`) when GitHub exposes ref metadata.
+- The workflow is guarded for `github.repository == 'rmk40/opencode'`. Manual `workflow_dispatch` runs must originate from the `actualyze` branch; tag-triggered runs must use a tag matching `vX.Y.Z-aai.N` whose commit is reachable from `actualyze`.
 
 ### Fork Release Commands
 
@@ -25,10 +26,17 @@ bun run release:fork -- npm-publish --version 1.14.24-aai.1
 bun run release:fork -- self-test
 ```
 
+Normal release command:
+
+```bash
+git tag v1.14.24-aai.2
+git push fork v1.14.24-aai.2
+```
+
 - `validate` checks repo/branch context and writes `version` / `channel` outputs in GitHub Actions.
 - `build` captures `https://models.dev/api.json`, writes a hashed `models.dev-api.<sha256>.json`, sets `MODELS_DEV_API_JSON`, runs the upstream CLI build, smoke-tests Linux x64/baseline and x64 musl/baseline-musl, validates all expected target dirs, normalizes Windows artifacts to `bin/opencode.exe`, writes release metadata, and creates an intra-workflow `opencode-cli-dist.tar`. The Alpine musl smoke tests install `libstdc++` and `libgcc`; bare Alpine does not include `libstdc++.so.6` or `libgcc_s.so.1`.
 - `package` restores `opencode-cli-dist.tar`, validates tar member paths/types before extraction, validates artifact contents, restores executable bits defensively, packages Linux as `.tar.gz`, packages macOS/Windows as `.zip`, includes the models.dev snapshot asset, and writes `SHA256SUMS` with bare filenames.
-- `release` requires `GH_TOKEN` and `GITHUB_REPOSITORY`, requires the phase 1 dist tar, verifies metadata version matches the requested version, fails if the release or tag already exists, creates a draft release, uploads binary/model assets first, then uploads `SHA256SUMS` last. It never uses `--clobber`.
+- `release` requires `GH_TOKEN` and `GITHUB_REPOSITORY`, requires the phase 1 dist tar, verifies metadata version matches the requested version, fails if the release already exists, and uploads binary/model assets first, then `SHA256SUMS` last. Manual `workflow_dispatch` runs fail if `v<version>` tag already exists and create a draft release targeting the workflow commit. Tag-triggered runs require the tag commit to be reachable from `actualyze` and create a published prerelease anchored to the triggering tag. `release` never uses `--clobber` and always marks the release `--prerelease`.
 - `npm-package` restores `opencode-cli-dist.tar` and stages scoped GitHub Packages npm tarballs in `${RUNNER_TEMP}/fork-release/npm-tarballs`: wrapper `@rmk40/opencode` plus platform packages like `@rmk40/opencode-darwin-arm64`.
 - `npm-publish` requires `NODE_AUTH_TOKEN`, preflights every `@rmk40/*@<version>` package against `https://npm.pkg.github.com`, publishes platform packages first, publishes `@rmk40/opencode` last, and applies the `aai` dist-tag.
 - For local package-only debugging, use `FORK_RELEASE_SKIP_CONTEXT_CHECK=1` to bypass repo/branch guards and `FORK_RELEASE_ALLOW_LOCAL_DIST=1` to package an existing `packages/opencode/dist` without the phase 1 tar. Do not use those overrides in CI or for real draft releases.
@@ -36,11 +44,11 @@ bun run release:fork -- self-test
 
 ### Fork Release Operational Notes
 
-- The workflow is manual (`workflow_dispatch`) with inputs `upstream_version`, `suffix`, `create_release`, and `publish_npm`.
+- The workflow runs automatically on `v*-aai.*` tag pushes and also supports manual `workflow_dispatch` with inputs `upstream_version`, `suffix`, `create_release`, and `publish_npm`. Tag pushes publish the GitHub release and GitHub Packages automatically; manual runs keep release/npm publishing behind explicit booleans.
 - The build job has read-only contents permissions. The draft release job has `contents: write`, uses `actions/checkout@v4` with `persist-credentials: false`, and exposes `GH_TOKEN` only to the package-script release step.
 - The phase 1 artifact handoff is a tar file, not raw directory upload, so executable modes and layout survive across jobs. The metadata artifact must be downloaded to `${RUNNER_TEMP}/fork-release/release-metadata`.
 - Release archives intentionally contain the contents of each target's `bin/` directory, not the surrounding target directory or its `package.json`. This matches upstream release asset shape.
-- Draft releases must remain draft until manual cross-platform smoke testing is complete. CI only runtime-smoke-tests Linux x64, Linux x64 baseline, Linux x64 musl, and Linux x64 baseline musl.
+- Draft releases (manual `create_release` path) must remain draft until manual cross-platform smoke testing is complete. Tag-triggered releases are intentionally published as prereleases after build-time verification only; CI only runtime-smoke-tests Linux x64, Linux x64 baseline, Linux x64 musl, and Linux x64 baseline musl.
 - If draft creation or asset upload partially fails, delete the draft release and any `v<version>` tag before rerunning. Do not use GitHub's "Re-run failed jobs" button against a partial upload.
 - The `aai` updater channel is intentionally not promoted yet. Audit `OPENCODE_CHANNEL` consumers before sharing artifacts outside internal testing.
 - GitHub Packages install command is `npm install -g @rmk40/opencode@aai --registry=https://npm.pkg.github.com`. Consumers normally need a GitHub token in `.npmrc` for `npm.pkg.github.com`.

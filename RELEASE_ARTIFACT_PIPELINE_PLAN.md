@@ -57,6 +57,9 @@ on:
         required: false
         type: boolean
         default: false
+  push:
+    tags:
+      - "v*-aai.*"
 ```
 
 Run this workflow from the long-lived `actualyze` branch in the `rmk40/opencode` fork. Merge upstream `dev` into `actualyze` as needed instead of recreating the branch. The workflow should fail early unless both are true:
@@ -71,12 +74,21 @@ Construct the release version in the workflow from the upstream version and suff
 - `upstream_version=1.14.24`, `suffix=aai.2` produces `1.14.24-aai.2`.
 - `upstream_version=1.14.24`, `suffix=aai.3` produces `1.14.24-aai.3`.
 
+For normal releases, push a tag matching `vX.Y.Z-aai.N`. CI derives the same values from the tag and does not require manual inputs:
+
+```bash
+git tag v1.14.24-aai.3
+git push fork v1.14.24-aai.3
+```
+
 Validate inputs before building:
 
 - `upstream_version` must match `X.Y.Z`, for example `1.14.24`.
 - `suffix` must match `^aai\.[1-9][0-9]*$`, for example `aai.1`. This enforces no leading zeroes and rejects SemVer-invalid values like `aai.01` early.
 - `version` must be exactly `${upstream_version}-${suffix}` and valid SemVer.
 - `OPENCODE_CHANNEL` must be set explicitly to `aai` so fork builds do not embed the upstream `latest` channel.
+
+For tag-triggered releases, the tag must be reachable from `actualyze`. Tag-triggered runs create a published GitHub release and publish GitHub Packages automatically. Manual `workflow_dispatch` runs keep draft release creation behind `create_release` and GitHub Packages publishing behind `publish_npm`.
 
 Run the version validation after constructing `${VERSION}` and before exporting it as `OPENCODE_VERSION`; `@opencode-ai/script` returns `OPENCODE_VERSION` verbatim.
 
@@ -197,17 +209,17 @@ After CLI artifacts are reliable, add an optional job gated by `create_release`.
 
 This job should:
 
-- Run only when `create_release == true`.
+- Run when `create_release == true` for manual dispatches or on every valid release tag push.
 - Set job-level `permissions.contents: write`.
 - Set `env.GH_TOKEN: ${{ github.token }}` only on the package-script release step. Do not expose the write-scoped token to checkout/setup steps, and do not set a conflicting `GITHUB_TOKEN` value in the same step.
 - Download the phase 1 CLI dist tar from the workflow run and let `bun run release:fork -- release` unpack it.
 - Download the build metadata artifact, including `models.dev-api.<sha256>.json`, from the workflow run.
 - Do not invoke `packages/opencode/script/build.ts`; phase 2 only packages artifacts produced by phase 1 through `bun run release:fork -- release`.
 - Restore executable bits defensively before packaging non-Windows release archives, even though the phase 1 dist tar preserves modes.
-- Fail if a release or tag named `v${version}` already exists; do not clobber an existing release.
+- Fail if a release named `v${version}` already exists; do not clobber an existing release. Manual dispatches also fail if the tag exists. Tag-triggered runs allow the triggering tag to exist.
 - Compress artifacts into the same release-asset shape upstream expects.
 - Generate `SHA256SUMS` for every release asset and upload it with the assets. Use GNU `sha256sum` output, one line per file.
-- Create a draft release for `v${version}` in `rmk40/opencode`, targeting the workflow commit (`$GITHUB_SHA`).
+- Manual dispatches create a draft release for `v${version}` in `rmk40/opencode`, targeting the workflow commit (`$GITHUB_SHA`). Tag-triggered releases create a published release for the triggering tag.
 - Upload assets with `gh release upload` and no `--clobber`.
 - Generate a release body using the fields listed below.
 

@@ -1,5 +1,5 @@
 name: fork release artifacts
-run-name: ${{ format('actualyze {0}-{1}', inputs.upstream_version, inputs.suffix) }}
+run-name: ${{ github.ref_type == 'tag' && github.ref_name || format('actualyze {0}-{1}', inputs.upstream_version, inputs.suffix) }}
 
 on:
   workflow_dispatch:
@@ -22,12 +22,15 @@ on:
         required: false
         type: boolean
         default: false
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*-aai.[0-9]*"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ inputs.upstream_version }}-${{ inputs.suffix }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +45,9 @@ jobs:
       models_snapshot_asset: ${{ steps.build.outputs.models_snapshot_asset }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-bun
 
@@ -50,10 +56,7 @@ jobs:
         env:
           UPSTREAM_VERSION: ${{ inputs.upstream_version }}
           SUFFIX: ${{ inputs.suffix }}
-        run: >-
-          bun run release:fork -- validate
-          --upstream-version "$UPSTREAM_VERSION"
-          --suffix "$SUFFIX"
+        run: bun run release:fork -- validate
 
       - name: Build CLI artifacts
         id: build
@@ -64,8 +67,6 @@ jobs:
           RAW_INPUTS: ${{ toJson(inputs) }}
         run: >-
           bun run release:fork -- build
-          --upstream-version "$UPSTREAM_VERSION"
-          --suffix "$SUFFIX"
           --version "$VERSION"
 
       - uses: actions/upload-artifact@v4
@@ -80,18 +81,19 @@ jobs:
           path: ${{ runner.temp }}/fork-release/release-metadata/**
           if-no-files-found: error
 
-  draft-release:
-    name: create draft release
+  release:
+    name: create GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: build-cli
-    if: ${{ inputs.create_release }}
+    if: ${{ github.ref_type == 'tag' || inputs.create_release }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-bun
 
@@ -105,7 +107,7 @@ jobs:
           name: opencode-build-metadata
           path: ${{ runner.temp }}/fork-release/release-metadata
 
-      - name: Create draft release
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build-cli.outputs.version }}
@@ -117,8 +119,10 @@ jobs:
     name: publish GitHub Packages npm packages
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: build-cli
-    if: ${{ inputs.publish_npm }}
+    needs:
+      - build-cli
+      - release
+    if: ${{ always() && needs.build-cli.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref_type == 'tag' || inputs.publish_npm) }}
     permissions:
       contents: read
       packages: write
@@ -126,6 +130,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-bun
 

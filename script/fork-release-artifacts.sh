@@ -96,6 +96,10 @@ repo_name() {
 }
 
 branch_name() {
+  if is_tag_context; then
+    printf '%s\n' "$TARGET_BRANCH"
+    return
+  fi
   if [ -n "${GITHUB_REF_NAME:-}" ]; then
     printf '%s\n' "$GITHUB_REF_NAME"
     return
@@ -134,9 +138,54 @@ run_url() {
   printf '%s\n' "manual-local-run"
 }
 
+is_tag_context() {
+  [ "${GITHUB_REF_TYPE:-}" = "tag" ] || [[ "${GITHUB_REF:-}" == refs/tags/* ]]
+}
+
+tag_name() {
+  if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
+    printf '%s\n' "$GITHUB_REF_NAME"
+    return
+  fi
+  if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+    printf '%s\n' "${GITHUB_REF#refs/tags/}"
+  fi
+}
+
+derive_version_from_tag() {
+  local tag version
+  tag="$(tag_name)"
+  [ -n "$tag" ] || die "tag context is missing tag name"
+  [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-aai\.([1-9][0-9]*)$ ]] || die "release tag must match vX.Y.Z-aai.N"
+  version="${tag#v}"
+  UPSTREAM_VERSION="${version%-aai.*}"
+  SUFFIX="aai.${version##*-aai.}"
+  VERSION="${VERSION:-$version}"
+}
+
+ensure_tag_commit_on_branch() {
+  is_tag_context || return 0
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+  if [ "${FORK_RELEASE_SKIP_REACHABILITY_CHECK:-}" = "1" ]; then
+    return 0
+  fi
+  if ! git fetch --no-tags origin "refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" 2>"$WORKDIR/git-fetch.log"; then
+    cat "$WORKDIR/git-fetch.log" >&2 || true
+    die "unable to fetch $TARGET_BRANCH for reachability check; ensure the job has access to origin"
+  fi
+  git merge-base --is-ancestor "$(sha_value)" "refs/remotes/origin/$TARGET_BRANCH" || die "tag commit must be reachable from $TARGET_BRANCH"
+}
+
 validate_context() {
   [ "${FORK_RELEASE_SKIP_CONTEXT_CHECK:-}" = "1" ] && return 0
   [ "$(repo_name)" = "$TARGET_REPO" ] || die "This workflow only runs in $TARGET_REPO"
+  if is_tag_context; then
+    if [ -n "${GITHUB_REF:-}" ]; then
+      [[ "$GITHUB_REF" == refs/tags/v*-aai.* ]] || die "tag releases must use refs/tags/vX.Y.Z-aai.N"
+    fi
+    ensure_tag_commit_on_branch
+    return 0
+  fi
   if [ -n "${GITHUB_REF_TYPE:-}" ]; then
     [ "$GITHUB_REF_TYPE" = "branch" ] || die "This workflow must run from a branch ref"
   fi
@@ -147,6 +196,9 @@ validate_context() {
 }
 
 version_for() {
+  if is_tag_context; then
+    derive_version_from_tag
+  fi
   [ -n "$UPSTREAM_VERSION" ] || die "--upstream-version is required"
   [ -n "$SUFFIX" ] || die "--suffix is required"
   [[ "$UPSTREAM_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die "upstream_version must match X.Y.Z without leading zeroes"
@@ -381,6 +433,10 @@ check_release_available() {
       ;;
   esac
 
+  if is_tag_context; then
+    return 0
+  fi
+
   tag_status="$(curl -sS -o "$WORKDIR/tag.json" -w "%{http_code}" \
     -H "Authorization: Bearer ${GH_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
@@ -599,7 +655,11 @@ release_notes() {
     printf '%s\n' "- Linux x64 and Linux x64 baseline smoke-tested with opencode --version."
     printf '%s\n' "- Linux x64 musl and Linux x64 baseline musl smoke-tested in Alpine."
     printf '%s\n' "- macOS, Windows, Linux arm64, and other non-native artifacts are build-verified only."
-    printf '%s\n\n' "- Keep this release as draft until manual cross-platform smoke testing is complete."
+    if is_tag_context; then
+      printf '%s\n\n' "- Published automatically from release tag $(tag_name)."
+    else
+      printf '%s\n\n' "- Keep this release as draft until manual cross-platform smoke testing is complete."
+    fi
     printf '%s\n\n' "## Workflow Inputs"
     printf '%s\n' '```json'
     cat "$METADATA_DIR/inputs.json"
@@ -631,9 +691,16 @@ release_cmd() {
   package_cmd
   release_notes
 
+  local release_args
+  release_args=(--prerelease)
+  if is_tag_context; then
+    ensure_tag_commit_on_branch
+  else
+    release_args+=(--draft --target "$(sha_value)")
+  fi
+
   gh release create "v${VERSION}" \
-    --draft \
-    --target "$(sha_value)" \
+    "${release_args[@]}" \
     --title "OpenCode ${VERSION}" \
     --notes-file "$WORKDIR/release-notes.md" \
     --repo "$(repo_name)"
@@ -697,6 +764,28 @@ self_test_cmd() {
     die "self-test invalid suffix unexpectedly passed"
   fi
   grep -F 'suffix must match aai.N' "$tmp/invalid.log" >/dev/null || die "self-test invalid suffix did not explain failure"
+
+  GITHUB_REPOSITORY="$TARGET_REPO" \
+  GITHUB_REF_TYPE=tag \
+  GITHUB_REF=refs/tags/v1.2.3-aai.4 \
+  GITHUB_REF_NAME=v1.2.3-aai.4 \
+  GITHUB_OUTPUT="$tmp/tag-output.txt" \
+  FORK_RELEASE_WORKDIR="$tmp/work" \
+  FORK_RELEASE_DIST_DIR="$tmp/dist" \
+    bash "$ROOT/script/fork-release-artifacts.sh" validate > "$tmp/tag-validate.log"
+
+  grep -Fx 'version=1.2.3-aai.4' "$tmp/tag-validate.log" >/dev/null || die "self-test tag validate did not derive expected version"
+
+  if GITHUB_REPOSITORY="$TARGET_REPO" \
+    GITHUB_REF_TYPE=tag \
+    GITHUB_REF=refs/tags/v1.2.3-aai.04 \
+    GITHUB_REF_NAME=v1.2.3-aai.04 \
+    FORK_RELEASE_WORKDIR="$tmp/work" \
+    FORK_RELEASE_DIST_DIR="$tmp/dist" \
+      bash "$ROOT/script/fork-release-artifacts.sh" validate > "$tmp/invalid-tag.log" 2>&1; then
+    die "self-test invalid tag unexpectedly passed"
+  fi
+  grep -F 'release tag must match vX.Y.Z-aai.N' "$tmp/invalid-tag.log" >/dev/null || die "self-test invalid tag did not explain failure"
 
   printf 'models snapshot\n' > "$tmp/work/release-metadata/models.dev-api.fakehash.json"
   snapshot_hash="$(hash_file "$tmp/work/release-metadata/models.dev-api.fakehash.json")"
