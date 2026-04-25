@@ -213,9 +213,6 @@ validate_context() {
 }
 
 version_for() {
-  if is_tag_context; then
-    derive_version_from_tag
-  fi
   [ -n "$UPSTREAM_VERSION" ] || die "--upstream-version is required"
   [ -n "$SUFFIX" ] || die "--suffix is required"
   [[ "$UPSTREAM_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die "upstream_version must match X.Y.Z without leading zeroes"
@@ -297,6 +294,9 @@ validate_artifact_contents() {
 
 validate_cmd() {
   validate_context
+  if is_tag_context; then
+    derive_version_from_tag
+  fi
   VERSION="$(version_for)"
   write_output version "$VERSION"
   write_output channel "$CHANNEL"
@@ -314,6 +314,9 @@ fetch_models_snapshot() {
 
 build_cmd() {
   validate_context
+  if is_tag_context; then
+    derive_version_from_tag
+  fi
   validate_version
   fetch_models_snapshot
 
