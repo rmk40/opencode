@@ -29,16 +29,18 @@ opencode [project]
 
 #### Flags
 
-| Flag         | Short | Description                                                             |
-| ------------ | ----- | ----------------------------------------------------------------------- |
-| `--continue` | `-c`  | Continue the last session                                               |
-| `--session`  | `-s`  | Session ID to continue                                                  |
-| `--fork`     |       | Fork the session when continuing (use with `--continue` or `--session`) |
-| `--prompt`   |       | Prompt to use                                                           |
-| `--model`    | `-m`  | Model to use in the form of provider/model                              |
-| `--agent`    |       | Agent to use                                                            |
-| `--port`     |       | Port to listen on                                                       |
-| `--hostname` |       | Hostname to listen on                                                   |
+| Flag                       | Short | Description                                                             |
+| -------------------------- | ----- | ----------------------------------------------------------------------- |
+| `--continue`               | `-c`  | Continue the last session                                               |
+| `--session`                | `-s`  | Session ID to continue                                                  |
+| `--fork`                   |       | Fork the session when continuing (use with `--continue` or `--session`) |
+| `--prompt`                 |       | Prompt to use                                                           |
+| `--model`                  | `-m`  | Model to use in the form of provider/model                              |
+| `--agent`                  |       | Agent to use                                                            |
+| `--port`                   |       | Port to listen on                                                       |
+| `--hostname`               |       | Hostname to listen on                                                   |
+| `--mdns`                   |       | Enable mDNS discovery                                                   |
+| `--allow-insecure-no-auth` |       | Allow non-loopback binds without basic auth (unsafe)                    |
 
 ---
 
@@ -361,16 +363,17 @@ Start a headless OpenCode server for API access. Check out the [server docs](/do
 opencode serve
 ```
 
-This starts an HTTP server that provides API access to opencode functionality without the TUI interface. Set `OPENCODE_SERVER_PASSWORD` to enable HTTP basic auth (username defaults to `opencode`).
+This starts an HTTP server that provides API access to opencode functionality without the TUI interface. Set `OPENCODE_SERVER_PASSWORD` to enable HTTP basic auth (username defaults to `opencode`). Non-loopback binds such as `0.0.0.0` and mDNS refuse to start without a password unless `--allow-insecure-no-auth` or `server.allowInsecureNoAuth` is set.
 
 #### Flags
 
-| Flag         | Description                                |
-| ------------ | ------------------------------------------ |
-| `--port`     | Port to listen on                          |
-| `--hostname` | Hostname to listen on                      |
-| `--mdns`     | Enable mDNS discovery                      |
-| `--cors`     | Additional browser origin(s) to allow CORS |
+| Flag                       | Description                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `--port`                   | Port to listen on                                            |
+| `--hostname`               | Hostname to listen on                                        |
+| `--mdns`                   | Enable mDNS discovery                                        |
+| `--cors`                   | Additional browser origin(s) to allow CORS                   |
+| `--allow-insecure-no-auth` | Allow non-loopback binds without basic auth. This is unsafe. |
 
 ---
 
@@ -457,16 +460,17 @@ Start a headless OpenCode server with a web interface.
 opencode web
 ```
 
-This starts an HTTP server and opens a web browser to access OpenCode through a web interface. Set `OPENCODE_SERVER_PASSWORD` to enable HTTP basic auth (username defaults to `opencode`).
+This starts an HTTP server and opens a web browser to access OpenCode through a web interface. Set `OPENCODE_SERVER_PASSWORD` to enable HTTP basic auth (username defaults to `opencode`). Non-loopback binds such as `0.0.0.0` and mDNS refuse to start without a password unless `--allow-insecure-no-auth` or `server.allowInsecureNoAuth` is set.
 
 #### Flags
 
-| Flag         | Description                                |
-| ------------ | ------------------------------------------ |
-| `--port`     | Port to listen on                          |
-| `--hostname` | Hostname to listen on                      |
-| `--mdns`     | Enable mDNS discovery                      |
-| `--cors`     | Additional browser origin(s) to allow CORS |
+| Flag                       | Description                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `--port`                   | Port to listen on                                            |
+| `--hostname`               | Hostname to listen on                                        |
+| `--mdns`                   | Enable mDNS discovery                                        |
+| `--cors`                   | Additional browser origin(s) to allow CORS                   |
+| `--allow-insecure-no-auth` | Allow non-loopback binds without basic auth. This is unsafe. |
 
 ---
 
@@ -482,11 +486,12 @@ This command starts an ACP server that communicates via stdin/stdout using nd-JS
 
 #### Flags
 
-| Flag         | Description           |
-| ------------ | --------------------- |
-| `--cwd`      | Working directory     |
-| `--port`     | Port to listen on     |
-| `--hostname` | Hostname to listen on |
+| Flag                       | Description                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `--cwd`                    | Working directory                                            |
+| `--port`                   | Port to listen on                                            |
+| `--hostname`               | Hostname to listen on                                        |
+| `--allow-insecure-no-auth` | Allow non-loopback binds without basic auth. This is unsafe. |
 
 ---
 
@@ -578,7 +583,7 @@ OpenCode can be configured using environment variables.
 | `OPENCODE_FAKE_VCS`                   | string  | Fake VCS provider for testing purposes            |
 | `OPENCODE_CLIENT`                     | string  | Client identifier (defaults to `cli`)             |
 | `OPENCODE_ENABLE_EXA`                 | boolean | Enable Exa web search tools                       |
-| `OPENCODE_SERVER_PASSWORD`            | string  | Enable basic auth for `serve`/`web`               |
+| `OPENCODE_SERVER_PASSWORD`            | string  | Enable basic auth for network server commands     |
 | `OPENCODE_SERVER_USERNAME`            | string  | Override basic auth username (default `opencode`) |
 | `OPENCODE_MODELS_URL`                 | string  | Custom URL for fetching models configuration      |
 

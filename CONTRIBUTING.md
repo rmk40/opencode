@@ -108,6 +108,13 @@ This starts the headless server on port 4096 by default. You can specify a diffe
 bun dev serve --port 8080
 ```
 
+When binding to a non-loopback host, set `OPENCODE_SERVER_PASSWORD` or pass `--allow-insecure-no-auth` to explicitly accept unauthenticated network access:
+
+```bash
+OPENCODE_SERVER_PASSWORD=your-password bun dev serve --hostname 0.0.0.0
+bun dev serve --hostname 0.0.0.0 --allow-insecure-no-auth
+```
+
 ### Running the Web App
 
 To test UI changes during development:
@@ -119,7 +126,7 @@ To test UI changes during development:
 bun run --cwd packages/app dev
 ```
 
-This starts a local dev server at http://localhost:5173 (or similar port shown in output). Most UI changes can be tested here, but the server must be running for full functionality.
+This starts the loopback-only Vite dev server at http://localhost:3000. Most UI changes can be tested here, but the server must be running for full functionality. The app root (`/`) opens the native dashboard, and the legacy home route remains available at `/home`.
 
 ### Running the Desktop App
 

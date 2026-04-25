@@ -116,6 +116,12 @@ Learn more about [agents](https://opencode.ai/docs/agents).
 
 For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
 
+### Web Interface
+
+Run `opencode web` to start the local server and open the browser UI. The root route (`/`) opens the native dashboard, and the legacy home screen remains available at `/home`.
+
+By default, server commands bind to `127.0.0.1`. Set `OPENCODE_SERVER_PASSWORD` before binding to non-loopback hosts such as `0.0.0.0`. Use `--allow-insecure-no-auth` or `server.allowInsecureNoAuth` only when you intentionally accept unauthenticated network access.
+
 ### Contributing
 
 If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.

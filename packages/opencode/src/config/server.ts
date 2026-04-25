@@ -14,6 +14,9 @@ export const Server = Schema.Struct({
   cors: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "Additional domains to allow for CORS",
   }),
+  allowInsecureNoAuth: Schema.optional(Schema.Boolean).annotate({
+    description: "Allow binding non-loopback hosts without OPENCODE_SERVER_PASSWORD. This is unsafe.",
+  }),
 })
   .annotate({ identifier: "ServerConfig" })
   .pipe(withStatics((s) => ({ zod: zod(s) })))

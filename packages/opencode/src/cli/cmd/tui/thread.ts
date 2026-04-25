@@ -8,7 +8,12 @@ import { UI } from "@/cli/ui"
 import { Log } from "@/util"
 import { errorMessage } from "@/util/error"
 import { withTimeout } from "@/util/timeout"
-import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
+import {
+  assertAuthenticatedNetwork,
+  buildServerAuthHeader,
+  withNetworkOptions,
+  resolveNetworkOptionsNoConfig,
+} from "@/cli/network"
 import { Filesystem } from "@/util"
 import type { GlobalEvent } from "@opencode-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
@@ -191,16 +196,22 @@ export const TuiThreadCommand = cmd({
         network.port !== 0 ||
         network.hostname !== "127.0.0.1"
 
+      if (external) assertAuthenticatedNetwork(network)
+
+      const externalHeaders = external ? buildServerAuthHeader() : undefined
+
       const transport = external
         ? {
             url: (await client.call("server", network)).url,
             fetch: undefined,
             events: undefined,
+            headers: externalHeaders,
           }
         : {
             url: "http://opencode.internal",
             fetch: createWorkerFetch(client),
             events: createEventSource(client),
+            headers: undefined as RequestInit["headers"] | undefined,
           }
 
       try {
@@ -209,6 +220,7 @@ export const TuiThreadCommand = cmd({
           sessionID: args.session,
           directory: cwd,
           fetch: transport.fetch,
+          headers: transport.headers,
         })
       } catch (error) {
         UI.error(errorMessage(error))
@@ -232,6 +244,7 @@ export const TuiThreadCommand = cmd({
           directory: cwd,
           fetch: transport.fetch,
           events: transport.events,
+          headers: transport.headers,
           args: {
             continue: args.continue,
             sessionID: args.session,

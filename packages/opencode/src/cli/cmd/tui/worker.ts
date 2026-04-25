@@ -10,6 +10,7 @@ import { GlobalBus } from "@/bus/global"
 import { Flag } from "@/flag/flag"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
+import { assertAuthenticatedNetwork, type ResolvedNetworkOptions } from "@/cli/network"
 import { AppRuntime } from "@/effect/app-runtime"
 import { ensureProcessMetadata } from "@/util/opencode-process"
 
@@ -69,7 +70,8 @@ export const rpc = {
     const result = writeHeapSnapshot("server.heapsnapshot")
     return result
   },
-  async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
+  async server(input: ResolvedNetworkOptions) {
+    assertAuthenticatedNetwork(input)
     if (server) await server.stop(true)
     server = await Server.listen(input)
     return { url: server.url.toString() }

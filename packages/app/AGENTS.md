@@ -4,11 +4,13 @@
 
 ## Local Dev
 
-- `opencode dev web` proxies `https://app.opencode.ai`, so local UI/CSS changes will not show there.
+- `opencode dev web` serves embedded UI assets when available. It fails closed with a local `503` page if assets are missing or disabled; it does not proxy `https://app.opencode.ai`.
 - For local UI changes, run the backend and app dev servers separately.
 - Backend (from `packages/opencode`): `bun run --conditions=browser ./src/index.ts serve --port 4096`
-- App (from `packages/app`): `bun dev -- --port 4444`
-- Open `http://localhost:4444` to verify UI changes (it targets the backend at `http://localhost:4096`).
+- App (from `packages/app`): `bun dev`
+- Open `http://localhost:3000` to verify UI changes (it targets the backend at `http://localhost:4096`).
+- The Vite dev server binds to `127.0.0.1` and stays proxy-free.
+- The app root (`/`) opens the native dashboard. The legacy home route is `/home`.
 
 ## SolidJS
 

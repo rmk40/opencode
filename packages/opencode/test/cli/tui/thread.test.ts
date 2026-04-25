@@ -6,7 +6,6 @@ import * as App from "../../../src/cli/cmd/tui/app"
 import { Rpc } from "../../../src/util"
 import { UI } from "../../../src/cli/ui"
 import * as Timeout from "../../../src/util/timeout"
-import * as Network from "../../../src/cli/network"
 import * as Win32 from "../../../src/cli/cmd/tui/win32"
 import { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
 
@@ -31,13 +30,6 @@ function setup() {
   }))
   spyOn(UI, "error").mockImplementation(() => {})
   spyOn(Timeout, "withTimeout").mockImplementation((input) => input)
-  spyOn(Network, "resolveNetworkOptions").mockResolvedValue({
-    mdns: false,
-    port: 0,
-    hostname: "127.0.0.1",
-    mdnsDomain: "opencode.local",
-    cors: [],
-  })
   spyOn(Win32, "win32DisableProcessedInput").mockImplementation(() => {})
   spyOn(Win32, "win32InstallCtrlCGuard").mockReturnValue(undefined)
 }
@@ -47,7 +39,16 @@ describe("tui thread", () => {
     mock.restore()
   })
 
-  async function call(project?: string) {
+  async function call(
+    project?: string,
+    input: Partial<{
+      hostname: string
+      port: number
+      mdns: boolean
+      "allow-insecure-no-auth": boolean
+      allowInsecureNoAuth: boolean
+    }> = {},
+  ) {
     const { TuiThreadCommand } = await import("../../../src/cli/cmd/tui/thread")
     const args: Parameters<NonNullable<typeof TuiThreadCommand.handler>>[0] = {
       _: [],
@@ -65,8 +66,37 @@ describe("tui thread", () => {
       "mdns-domain": "opencode.local",
       mdnsDomain: "opencode.local",
       cors: [],
+      "allow-insecure-no-auth": false,
+      allowInsecureNoAuth: false,
+      ...input,
     }
     return TuiThreadCommand.handler(args)
+  }
+
+  async function withWorker(run: () => Promise<void>) {
+    setup()
+    const worker = globalThis.Worker
+    const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    })
+    globalThis.Worker = class extends EventTarget {
+      onerror = null
+      onmessage = null
+      onmessageerror = null
+      postMessage() {}
+      terminate() {}
+    } as unknown as typeof Worker
+
+    try {
+      await run()
+    } finally {
+      if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+      globalThis.Worker = worker
+    }
   }
 
   async function check(project?: string) {
@@ -115,5 +145,28 @@ describe("tui thread", () => {
 
   test("uses the real cwd after resolving a relative project from PWD", async () => {
     await check(".")
+  })
+
+  test("rejects unauthenticated non-loopback server options", async () => {
+    await withWorker(async () => {
+      await expect(call(undefined, { hostname: "0.0.0.0" })).rejects.toThrow("OPENCODE_SERVER_PASSWORD")
+    })
+  })
+
+  test("forwards Basic auth header to tui() when OPENCODE_SERVER_PASSWORD is set", async () => {
+    const previous = process.env.OPENCODE_SERVER_PASSWORD
+    process.env.OPENCODE_SERVER_PASSWORD = "secret"
+    try {
+      await withWorker(async () => {
+        await expect(call(undefined, { hostname: "0.0.0.0" })).rejects.toBe(stop)
+        const input = (
+          App.tui as unknown as { mock: { calls: Array<[{ headers?: Record<string, string> }]> } }
+        ).mock.calls.at(-1)?.[0]
+        expect(input?.headers?.Authorization?.startsWith("Basic ")).toBe(true)
+      })
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_SERVER_PASSWORD
+      else process.env.OPENCODE_SERVER_PASSWORD = previous
+    }
   })
 })
