@@ -169,11 +169,28 @@ ensure_tag_commit_on_branch() {
   if [ "${FORK_RELEASE_SKIP_REACHABILITY_CHECK:-}" = "1" ]; then
     return 0
   fi
-  if ! git fetch --no-tags origin "refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" 2>"$WORKDIR/git-fetch.log"; then
-    cat "$WORKDIR/git-fetch.log" >&2 || true
-    die "unable to fetch $TARGET_BRANCH for reachability check; ensure the job has access to origin"
-  fi
-  git merge-base --is-ancestor "$(sha_value)" "refs/remotes/origin/$TARGET_BRANCH" || die "tag commit must be reachable from $TARGET_BRANCH"
+  mkdir -p "$WORKDIR"
+  local commit status body
+  commit="$(sha_value)"
+  status="$(curl -sS -o "$WORKDIR/compare.json" -w "%{http_code}" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$(repo_name)/compare/$TARGET_BRANCH...$commit")"
+  case "$status" in
+    200)
+      body="$(jq -r '.status // empty' "$WORKDIR/compare.json")"
+      case "$body" in
+        identical|behind) return 0 ;;
+        ahead|diverged|*)
+          cat "$WORKDIR/compare.json" >&2
+          die "tag commit $commit must be reachable from $TARGET_BRANCH (got $body)"
+          ;;
+      esac
+      ;;
+    *)
+      cat "$WORKDIR/compare.json" >&2
+      die "reachability check failed with HTTP $status"
+      ;;
+  esac
 }
 
 validate_context() {
