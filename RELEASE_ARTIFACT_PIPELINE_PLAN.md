@@ -162,10 +162,10 @@ docker run --rm \
   -e XDG_DATA_HOME=/tmp/.local/share \
   -v "$PWD/packages/opencode/dist/opencode-linux-x64-musl/bin:/opt/opencode:ro" \
   alpine:3.20 \
-  /opt/opencode/opencode --version
+  sh -lc 'apk add --no-cache libstdc++ libgcc >/dev/null && /opt/opencode/opencode --version' | grep -F "$VERSION"
 ```
 
-- Run the same Alpine smoke test for `opencode-linux-x64-baseline-musl`.
+- Run the same Alpine smoke test for `opencode-linux-x64-baseline-musl`. The `apk add` step reflects the expected Alpine runtime libraries for the current musl artifacts; a bare Alpine image does not include `libstdc++.so.6` or `libgcc_s.so.1`.
 
 - macOS, Windows, Linux arm64, and other non-native artifacts are build-verified but not native-smoke-tested in phase 1.
 - A downloaded macOS or local-platform artifact runs manually outside CI before using draft releases for anything beyond internal testing.

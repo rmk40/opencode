@@ -276,14 +276,14 @@ build_cmd() {
     -e XDG_DATA_HOME=/tmp/.local/share \
     -v "$(dist_mount_path)/opencode-linux-x64-musl/bin:/opt/opencode:ro" \
     alpine:3.20 \
-    /opt/opencode/opencode --version | grep -F "$VERSION"
+    sh -lc 'apk add --no-cache libstdc++ libgcc >/dev/null && /opt/opencode/opencode --version' | grep -F "$VERSION"
   docker run --rm \
     -e HOME=/tmp \
     -e XDG_CONFIG_HOME=/tmp/.config \
     -e XDG_DATA_HOME=/tmp/.local/share \
     -v "$(dist_mount_path)/opencode-linux-x64-baseline-musl/bin:/opt/opencode:ro" \
     alpine:3.20 \
-    /opt/opencode/opencode --version | grep -F "$VERSION"
+    sh -lc 'apk add --no-cache libstdc++ libgcc >/dev/null && /opt/opencode/opencode --version' | grep -F "$VERSION"
 
   mkdir -p "$METADATA_DIR"
   validate_artifacts
