@@ -4,7 +4,8 @@
 # Compile the fork CLI from this checkout (darwin-arm64) and install
 # the resulting Mach-O at ~/.local/bin/opencode. After this runs,
 # `opencode` on PATH is the locally-built binary from HEAD, with
-# OPENCODE_VERSION baked in as `1.14.24-aai.local.<sha>` and the
+# OPENCODE_VERSION baked in as `<upstream>-aai.local.<sha>` (where
+# upstream is read live from packages/opencode/package.json) and the
 # fork-shaped channel/repo/registry envs as build-time defines so
 # `opencode upgrade` queries GitHub Packages and the binary continues
 # to share opencode-aai.db with oc-wrapper.sh-mode runs.
@@ -31,7 +32,6 @@ REPO="/Users/rmk/projects/oss/opencode"
 OPENCODE_DIR="$REPO/packages/opencode"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/opencode"
-UPSTREAM_VERSION="1.14.24"
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -44,6 +44,17 @@ die() { err "$*"; exit 1; }
 command -v bun >/dev/null 2>&1 || die "bun not found on PATH"
 [[ -d "$REPO/.git" ]] || die "REPO=$REPO is not a git checkout"
 [[ -d "$OPENCODE_DIR" ]] || die "opencode dir missing: $OPENCODE_DIR"
+
+# Read upstream version live from packages/opencode/package.json so the
+# script tracks the actual baseline after each upstream merge. A previous
+# revision hardcoded "1.14.24" and silently produced stale version strings
+# after the v1.14.25 merge.
+UPSTREAM_VERSION="$(
+  grep -m1 '"version"' "$OPENCODE_DIR/package.json" \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+)"
+[[ "$UPSTREAM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || die "could not parse upstream version from $OPENCODE_DIR/package.json (got: '$UPSTREAM_VERSION')"
 
 # Ensure the install directory exists and is writable.
 mkdir -p "$INSTALL_DIR"

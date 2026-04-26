@@ -70,21 +70,22 @@ and copies the resulting binary into place.
      Refuse rather than risk it.
 
 3. **Version derivation:**
-   - Upstream version is hardcoded for now: `1.14.24`. Matches the
-     latest `aai.N` tag's upstream version. If/when upstream bumps,
-     this string is updated by hand alongside the
-     `release:fork build` CLI's `--upstream-version` flag.
+   - Upstream version is read live from
+     `packages/opencode/package.json`'s `"version"` field. After each
+     upstream merge that bumps the baseline, the script picks up the
+     new version automatically.
    - Short SHA from `git rev-parse --short=7 HEAD`.
    - Dirty check: `git diff --quiet HEAD` and `git diff --cached
 --quiet HEAD`; if either is non-zero, append `.dirty`.
-   - Final string: `1.14.24-aai.local.<sha>` (or
-     `1.14.24-aai.local.<sha>.dirty`). Dot-separated prerelease tag
-     keeps the whole thing valid semver.
+   - Final string: `<upstream>-aai.local.<sha>` (or
+     `<upstream>-aai.local.<sha>.dirty`, e.g.
+     `1.14.25-aai.local.7d4789e`). Dot-separated prerelease tag keeps
+     the whole thing valid semver.
 
 4. **Env setup** (all exported before invoking `build.ts`):
 
    ```
-   OPENCODE_VERSION=1.14.24-aai.local.<sha>[.dirty]
+   OPENCODE_VERSION=<upstream>-aai.local.<sha>[.dirty]
    OPENCODE_CHANNEL=aai
    OPENCODE_REPO=rmk40/opencode
    OPENCODE_NPM_PACKAGE=@rmk40/opencode
@@ -119,7 +120,7 @@ arm64` via `file`. Fail loud otherwise.
 
 7. **Post-install smoke:**
    - `"$INSTALL_PATH" --version` reports the expected
-     `1.14.24-aai.local.<sha>` string. If not, fail loud.
+     `<upstream>-aai.local.<sha>` string. If not, fail loud.
    - `"$INSTALL_PATH" --help | head -5` runs without crash.
    - Print a 3-line summary: build time, before/after version, and a
      reminder that the npm metadata is now out of sync.
@@ -168,15 +169,15 @@ arm64` via `file`. Fail loud otherwise.
 - `which opencode` → `/opt/homebrew/bin/opencode` (unchanged).
 - `file /opt/homebrew/bin/opencode` → `Mach-O 64-bit executable arm64`
   (was previously a `symbolic link`).
-- `opencode --version` → `1.14.24-aai.local.<sha>` (with `.dirty` if
-  the working tree is dirty at install time).
+- `opencode --version` → `<upstream>-aai.local.<sha>` (with `.dirty`
+  if the working tree is dirty at install time).
 - `opencode --help | head -5` runs clean.
 - An existing fork session (started under `oc` or the npm-installed
   binary) is still readable from the new binary, proving shared
   `opencode-aai.db`.
 - After `npm install -g @rmk40/opencode@aai
 --registry=https://npm.pkg.github.com`, `opencode --version`
-  reverts to `1.14.24-aai.5` (or whatever's published), and the
+  reverts to whatever's published on the `aai` dist-tag, and the
   install script can be re-run to overlay again.
 
 ## Out of scope
