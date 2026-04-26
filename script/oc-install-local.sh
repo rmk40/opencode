@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # oc-install-local.sh
 #
-# Compile the fork CLI from this checkout (darwin-arm64) and overwrite
-# /opt/homebrew/bin/opencode with the result. Replaces the npm-managed
-# symlink left over from `npm install -g @rmk40/opencode@aai` with a
-# locally-built Mach-O binary versioned `1.14.24-aai.local.<sha>`.
+# Compile the fork CLI from this checkout (darwin-arm64) and install
+# the resulting Mach-O at ~/.local/bin/opencode. After this runs,
+# `opencode` on PATH is the locally-built binary from HEAD, with
+# OPENCODE_VERSION baked in as `1.14.24-aai.local.<sha>` and the
+# fork-shaped channel/repo/registry envs as build-time defines so
+# `opencode upgrade` queries GitHub Packages and the binary continues
+# to share opencode-aai.db with oc-wrapper.sh-mode runs.
 #
-# To revert: re-run
+# Iteration loop: edit source, run this, repeat. ~12s on warm rebuild.
+#
+# To revert: `rm ~/.local/bin/opencode`. There's no opencode binary
+# on PATH after that; reinstall via this script or via
 #   npm install -g @rmk40/opencode@aai \
 #     --registry=https://npm.pkg.github.com
-# which re-creates the symlink and pulls back the published artifact.
+# if you want the published artifact back.
 #
 # AGENTS.md says docs/CI workflows should call `bun run release:fork
 # ...` rather than invoking `script/build.ts` directly. This script is
@@ -17,13 +23,14 @@
 # only way to skip the full-matrix validator inside `release:fork
 # build`. Documented exception.
 #
-# See docs/plans/oc-install-local.md for the full design rationale.
+# See docs/plans/oc-install-local.md for the design rationale.
 
 set -euo pipefail
 
 REPO="/Users/rmk/projects/oss/opencode"
 OPENCODE_DIR="$REPO/packages/opencode"
-INSTALL_PATH="/opt/homebrew/bin/opencode"
+INSTALL_DIR="$HOME/.local/bin"
+INSTALL_PATH="$INSTALL_DIR/opencode"
 UPSTREAM_VERSION="1.14.24"
 
 # ---------------------------------------------------------------- helpers ---
@@ -38,56 +45,49 @@ command -v bun >/dev/null 2>&1 || die "bun not found on PATH"
 [[ -d "$REPO/.git" ]] || die "REPO=$REPO is not a git checkout"
 [[ -d "$OPENCODE_DIR" ]] || die "opencode dir missing: $OPENCODE_DIR"
 
-[[ -e "$INSTALL_PATH" ]] || die "$INSTALL_PATH does not exist; install \
-@rmk40/opencode@aai via npm first, then re-run this script"
+# Ensure the install directory exists and is writable.
+mkdir -p "$INSTALL_DIR"
+[[ -w "$INSTALL_DIR" ]] || die "$INSTALL_DIR is not writable"
 
-# Writability check. -w on a symlink follows to the target; the symlink's
-# target lives in a user-owned npm tree under /opt/homebrew, so this
-# should be true for the invoking user without sudo.
-[[ -w "$INSTALL_PATH" ]] || die "$INSTALL_PATH is not writable; check ownership"
-
-# Confirm `opencode` on PATH actually resolves to the file we plan to
-# replace. If a different copy shadows it, replacing this one is a
-# silent no-op.
-RESOLVED="$(command -v opencode 2>/dev/null || true)"
-if [[ "$RESOLVED" != "$INSTALL_PATH" ]]; then
-  die "\`which opencode\` returns '$RESOLVED', not '$INSTALL_PATH'; PATH \
-ordering means this install would have no effect"
+# Refuse to clobber a binary held open by a running process. macOS
+# keeps the running inode in memory after a `mv`, but a freshly forked
+# child reading from the new file mid-replace is a real corruption
+# window. lsof rc=0 means holders, rc=1 means none, rc>1 is a tool
+# failure (fail loud rather than silently fail open). Skip the check
+# entirely if the install path doesn't yet exist.
+if [[ -e "$INSTALL_PATH" && ! -L "$INSTALL_PATH" ]]; then
+  LSOF_STDERR="$(mktemp)"
+  trap 'rm -f "$LSOF_STDERR"' EXIT
+  set +e
+  HOLDERS="$(lsof -- "$INSTALL_PATH" 2>"$LSOF_STDERR")"
+  LSOF_RC=$?
+  set -e
+  case "$LSOF_RC" in
+    0) ;;                            # has holders, $HOLDERS is the table
+    1) ;;                            # no holders, $HOLDERS is empty
+    *)
+      err "lsof failed (rc=$LSOF_RC) probing $INSTALL_PATH:"
+      cat "$LSOF_STDERR" >&2 || true
+      exit 1
+      ;;
+  esac
+  rm -f "$LSOF_STDERR"
+  trap - EXIT
+  if [[ -n "$HOLDERS" ]]; then
+    err "$INSTALL_PATH is currently held open by:"
+    printf '%s\n' "$HOLDERS" >&2
+    err "stop them (or wait until the session ends) before re-running"
+    exit 1
+  fi
 fi
 
-# Refuse to clobber a binary held open by a running process. `lsof`
-# returns 0 with a list when the file has holders, 1 with empty stdout
-# when there are none, and >1 only on tool failure (missing flag,
-# permission error, etc.). Treat tool failure as fail-loud rather than
-# silently fail-open — the preflight loses its purpose otherwise.
-LSOF_STDERR="$(mktemp)"
-trap 'rm -f "$LSOF_STDERR"' EXIT
-# Single observation: capture both stdout and rc atomically. Splitting
-# this into two calls would open a TOCTOU window where a holder
-# appearing/disappearing between the two probes could mask a real
-# conflict. `set +e` around the substitution is required because a
-# top-level command substitution that returns non-zero (rc=1 on "no
-# holders" is normal for lsof) would otherwise abort under `set -e`.
-set +e
-HOLDERS="$(lsof -- "$INSTALL_PATH" 2>"$LSOF_STDERR")"
-LSOF_RC=$?
-set -e
-case "$LSOF_RC" in
-  0) ;;                            # has holders, $HOLDERS is the table
-  1) ;;                            # no holders, $HOLDERS is empty
-  *)
-    err "lsof failed (rc=$LSOF_RC) probing $INSTALL_PATH:"
-    cat "$LSOF_STDERR" >&2 || true
-    exit 1
-    ;;
-esac
-rm -f "$LSOF_STDERR"
-trap - EXIT
-if [[ -n "$HOLDERS" ]]; then
-  err "$INSTALL_PATH is currently held open by:"
-  printf '%s\n' "$HOLDERS" >&2
-  err "stop them (or wait until the session ends) before re-running"
-  exit 1
+# Refuse to install if a different `opencode` shadows ours on PATH —
+# overwriting the wrong one is silent. ~/.local/bin must precede any
+# other location.
+RESOLVED="$(command -v opencode 2>/dev/null || true)"
+if [[ -n "$RESOLVED" && "$RESOLVED" != "$INSTALL_PATH" ]]; then
+  die "\`which opencode\` returns '$RESOLVED', not '$INSTALL_PATH'; \
+fix PATH so $INSTALL_DIR comes first, then re-run"
 fi
 
 # ---------------------------------------------------------------- version ---
@@ -103,9 +103,10 @@ fi
 
 VERSION="${UPSTREAM_VERSION}-aai.local.${SHA}${DIRTY}"
 
-# Show the current installed version *before* we overwrite it, so the
-# banner can present a real before/after.
-BEFORE_VERSION="$("$INSTALL_PATH" --version 2>/dev/null | head -1 || echo unknown)"
+BEFORE_VERSION="(none)"
+if [[ -x "$INSTALL_PATH" ]]; then
+  BEFORE_VERSION="$("$INSTALL_PATH" --version 2>/dev/null | head -1 || echo unknown)"
+fi
 
 # ----------------------------------------------------------------- banner ---
 
@@ -115,7 +116,7 @@ log "  repo     $REPO"
 log "  version  $VERSION  (was: $BEFORE_VERSION)"
 log "  target   $INSTALL_PATH"
 log ""
-log "building (this takes ~30s)..."
+log "building (this takes ~30s, ~12s on warm rebuild)..."
 log ""
 
 # -------------------------------------------------------------- env exports ---
@@ -140,8 +141,7 @@ export OPENCODE_NPM_REGISTRY="https://npm.pkg.github.com"
 
 # `--single` filters allTargets to the host platform and skips the
 # baseline (avx2: false) variant; result is one entry: darwin-arm64.
-# build.ts wipes packages/opencode/dist before running, so the previous
-# matrix outputs are not preserved across local builds.
+# build.ts wipes packages/opencode/dist before running.
 ( cd "$OPENCODE_DIR" && exec bun run script/build.ts --single ) >&2
 
 BUILT_BIN="$OPENCODE_DIR/dist/opencode-darwin-arm64/bin/opencode"
@@ -153,25 +153,27 @@ if [[ "$FILE_INFO" != *"Mach-O"* ]] || [[ "$FILE_INFO" != *"arm64"* ]]; then
 fi
 
 # Pre-clobber smoke: confirm the freshly-built binary self-reports the
-# expected version BEFORE we overwrite the installed one. Catches the
-# case where build.ts succeeded structurally but OPENCODE_VERSION was
-# not properly baked in — without this, we'd replace the working
-# install with a broken one and only fail the post-install smoke.
+# expected version BEFORE we install it. Catches the case where build.ts
+# succeeded structurally but OPENCODE_VERSION was not properly baked in.
 PRE_VERSION="$("$BUILT_BIN" --version 2>/dev/null | head -1 || echo unknown)"
 if [[ "$PRE_VERSION" != *"$VERSION"* ]]; then
-  die "pre-install smoke: built binary --version returned '$PRE_VERSION', expected '$VERSION' (refusing to overwrite working install)"
+  die "pre-install smoke: built binary --version returned '$PRE_VERSION', expected '$VERSION' (refusing to install broken binary)"
 fi
 
 # ---------------------------------------------------------------- install ---
 
 # Stage in the same directory as the target so the final mv is atomic
-# (rename(2) on the same filesystem). Falls back gracefully if a stale
-# .new from a prior aborted run is present.
+# (rename(2) on the same filesystem). The EXIT trap removes any
+# leftover .new file if the script aborts between cp and mv.
 TMP_INSTALL="${INSTALL_PATH}.new.$$"
 trap 'rm -f "$TMP_INSTALL"' EXIT
 
 cp "$BUILT_BIN" "$TMP_INSTALL"
 chmod +x "$TMP_INSTALL"
+
+# If $INSTALL_PATH is currently a symlink (e.g. legacy `opencode ->
+# script/oc-wrapper.sh`), `mv -f` replaces it correctly — rename(2)
+# treats the symlink as the entry being replaced, not its target.
 mv -f "$TMP_INSTALL" "$INSTALL_PATH"
 trap - EXIT
 
@@ -182,16 +184,15 @@ if [[ "$AFTER_VERSION" != *"$VERSION"* ]]; then
   die "post-install smoke: --version returned '$AFTER_VERSION', expected '$VERSION'"
 fi
 
-# Check --help just runs without crashing; output not inspected.
 "$INSTALL_PATH" --help >/dev/null 2>&1 \
   || die "post-install smoke: --help exited non-zero"
 
+# --------------------------------------------------------------- guidance ---
+
 log ""
 log "installed."
-log "  before: $BEFORE_VERSION"
-log "  after:  $AFTER_VERSION"
+log "  before:  $BEFORE_VERSION"
+log "  after:   $AFTER_VERSION"
 log ""
-log "note: \`npm ls -g @rmk40/opencode\` still reports the previously"
-log "installed npm version. \`opencode --version\` is the source of"
-log "truth for what's actually running."
+log "iterate: edit source, re-run this script. ~12s warm rebuild."
 log ""
