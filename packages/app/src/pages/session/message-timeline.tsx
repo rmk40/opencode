@@ -77,7 +77,20 @@ const taskDescription = (part: Part, sessionID: string) => {
   if (typeof value === "string" && value) return value
 }
 
-const pace = (width: number) => Math.round(Math.max(1200, Math.min(3200, (Math.max(width, 360) * 2000) / 900)))
+// Pace the progress animation based on available width. Narrow viewports
+// (phones) get a slower cycle so the bar reads as a calm indicator rather
+// than a fast laser swipe across the screen. Linear interpolation from
+// 3200ms at 360px → 1800ms at 1200px, clamped at both ends to keep the
+// curve monotonic and avoid visible snaps on window resize.
+const PACE_NARROW_WIDTH = 360
+const PACE_WIDE_WIDTH = 1200
+const PACE_NARROW_MS = 3200
+const PACE_WIDE_MS = 1800
+const pace = (width: number) => {
+  const baseline = Math.min(PACE_WIDE_WIDTH, Math.max(PACE_NARROW_WIDTH, width))
+  const t = (baseline - PACE_NARROW_WIDTH) / (PACE_WIDE_WIDTH - PACE_NARROW_WIDTH)
+  return Math.round(PACE_NARROW_MS + t * (PACE_WIDE_MS - PACE_NARROW_MS))
+}
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
   const current = target instanceof Element ? target : undefined
@@ -249,17 +262,23 @@ export function MessageTimeline(props: {
     if (!id) return emptyMessages
     return sync.data.message[id] ?? emptyMessages
   })
-  const pending = createMemo(() =>
-    sessionMessages().findLast(
-      (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
-    ),
-  )
+  // Only the *last* message can legitimately indicate pending work. If an
+  // older assistant message has a missing `time.completed` (backend bug,
+  // dropped event), we don't want the progress bar stuck on that message
+  // forever. findLast over the full array had that failure mode.
+  const pending = createMemo(() => {
+    const messages = sessionMessages()
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== "assistant") return undefined
+    if (typeof last.time.completed === "number") return undefined
+    return last as AssistantMessage
+  })
   const sessionStatus = createMemo(() => {
     const id = sessionID()
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
   })
-  const working = createMemo(() => sessionStatus().type !== "idle")
+  const working = createMemo(() => !!pending() || sessionStatus().type !== "idle")
   const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
 
   const [timeoutDone, setTimeoutDone] = createSignal(true)
@@ -998,7 +1017,7 @@ export function MessageTimeline(props: {
             <div
               role="log"
               data-slot="session-turn-list"
-              class="flex flex-col items-start justify-start pb-16 transition-[margin]"
+              class="flex flex-col items-start justify-start pb-4 transition-[margin]"
               classList={{
                 "w-full": true,
                 "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
@@ -1043,10 +1062,7 @@ export function MessageTimeline(props: {
                       classList={{
                         "min-w-0 w-full max-w-full": true,
                         "md:max-w-200 2xl:max-w-[1000px]": props.centered,
-                      }}
-                      style={{
-                        "content-visibility": active() ? undefined : "auto",
-                        "contain-intrinsic-size": active() ? undefined : "auto 500px",
+                        "session-turn-cv-eligible": !active(),
                       }}
                     >
                       <Show when={commentCount() > 0}>
