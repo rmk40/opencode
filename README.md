@@ -14,13 +14,6 @@
 
 [![opencode terminal UI](packages/web/src/assets/lander/screenshot.png)](https://github.com/rmk40/opencode)
 
----
-
-This README is the fork's. For the upstream project (`anomalyco/opencode`),
-see the upstream repository or the fork's `dev` branch. The upstream README
-files are preserved as `README.<lang>.md` in this directory but are not the
-canonical docs for this fork.
-
 ## Mission
 
 The current focus of this fork is to **dramatically improve the mobile and
