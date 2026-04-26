@@ -83,3 +83,33 @@
     }
   }
 }
+
+/*
+ * iOS PWA standalone-mode viewport fix.
+ *
+ * In browser tab mode `100svh` (h-svh) correctly tracks the "small"
+ * viewport height - the one that stays stable as Safari's URL bar
+ * expands/collapses during scroll.
+ *
+ * In PWA standalone mode iOS WebKit still computes svh/dvh/lvh against
+ * Safari's tab geometry even though there is no URL bar, so `100svh`
+ * resolves to viewport-minus-urlbar (~797px on iPhone 12) instead of
+ * the full screen (~844px). The delta is the address-bar height, which
+ * shows up as a ~47px gap at the bottom of the app shell.
+ *
+ * `100lvh` (large viewport height) is the only unit that resolves to
+ * the actual full screen in standalone mode, so we override the root
+ * height there. Safari tab mode keeps `h-svh` to handle the dynamic
+ * URL bar correctly.
+ *
+ * This rule MUST live outside `@layer components` - Tailwind's `h-svh`
+ * utility lives in the later `utilities` layer, and utilities always
+ * override components regardless of selector specificity. Keeping it at
+ * the bare top level puts it after all layers in the cascade so `#root`
+ * (ID specificity) cleanly beats `.h-svh` (class specificity).
+ */
+@media all and (display-mode: standalone) {
+  #root {
+    height: 100lvh;
+  }
+}
