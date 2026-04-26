@@ -118,7 +118,7 @@ Substantial divergence here. `actualyze` is on the **newer upstream** for most o
 - **Why this matters**: Long bash output on mobile relayouts the whole timeline on every stream chunk and reads as "the screen clears before being repopulated".
 - **Severity**: Moderate. **Restoration**: medium. Touches both files; the ref-as-signal pattern is non-obvious; depends on `createResizeObserver` (already a dep).
 
-#### B10. `packages/app/src/pages/session/composer/session-todo-dock.tsx` — collapse-by-default on mobile
+#### B10. `packages/app/src/pages/session/composer/session-todo-dock.tsx` — collapse-by-default on mobile — **PORTED** (commit 3)
 
 - **Plus**: imports `createMediaQuery`, computes `isMd = (min-width: 768px)`, defaults `collapsed: !isMd()`. Comment explains that an expanded dock pushes the input behind the iOS keyboard accessory bar.
 - **Current**: `collapsed: false` always.

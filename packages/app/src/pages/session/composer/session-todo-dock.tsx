@@ -6,6 +6,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { TextStrikethrough } from "@opencode-ai/ui/text-strikethrough"
+import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { Index, createEffect, createMemo } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -47,8 +48,14 @@ export function SessionTodoDock(props: {
   dockProgress: number
 }) {
   const language = useLanguage()
+  // On mobile, the prompt input + virtual keyboard already consume most of
+  // the viewport. An expanded todo dock that lists every item pushes the
+  // input behind the keyboard accessory bar and feels "stuck open". Default
+  // to collapsed (summary line only, ~78px) on narrow viewports; the user
+  // can still tap to expand. Desktop keeps the original expanded default.
+  const isMd = createMediaQuery("(min-width: 768px)")
   const [store, setStore] = createStore({
-    collapsed: false,
+    collapsed: !isMd(),
     height: 320,
   })
 
