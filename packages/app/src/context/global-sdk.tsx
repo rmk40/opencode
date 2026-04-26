@@ -2,7 +2,7 @@ import type { Event } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { batch, onCleanup, onMount } from "solid-js"
+import { batch, createSignal, onCleanup, onMount } from "solid-js"
 import z from "zod"
 import { createSdkForServer } from "@/utils/server"
 import { useLanguage } from "./language"
@@ -108,13 +108,26 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     let attempt: AbortController | undefined
     let run: Promise<void> | undefined
     let started = false
+    // Mobile/touch devices background the JS runtime aggressively: timers
+    // pause, TCP sockets get closed, and the SSE stream silently dies while
+    // the tab is hidden. We handle that via the visibility-change reconnect
+    // below; the heartbeat interval itself must remain longer than the
+    // server's 10s keep-alive or every idle mobile session will reconnect
+    // on a perpetual loop.
+    const isTouchDevice =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(pointer: coarse)").matches
+        : false
     const HEARTBEAT_TIMEOUT_MS = 15_000
     let lastEventAt = Date.now()
     let heartbeat: ReturnType<typeof setTimeout> | undefined
+    const [reconnecting, setReconnecting] = createSignal(false)
     const resetHeartbeat = () => {
       lastEventAt = Date.now()
+      setReconnecting(false)
       if (heartbeat) clearTimeout(heartbeat)
       heartbeat = setTimeout(() => {
+        setReconnecting(true)
         attempt?.abort()
       }, HEARTBEAT_TIMEOUT_MS)
     }
@@ -122,6 +135,15 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       if (!heartbeat) return
       clearTimeout(heartbeat)
       heartbeat = undefined
+    }
+
+    // Manual reconnect: abort the current attempt so the outer loop
+    // immediately reconnects. Callers (refresh button, visibilitychange)
+    // don't need to wait for the heartbeat timeout.
+    const restart = () => {
+      if (!started) return
+      setReconnecting(true)
+      attempt?.abort()
     }
 
     const start = () => {
@@ -217,8 +239,17 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       makeEventListener(document, "visibilitychange", () => {
         if (document.visibilityState !== "visible") return
         if (!started) return
+        // On touch devices we can't trust the stream even if it appears
+        // fresh: iOS closes sockets silently when backgrounded and the
+        // JS timers pause, so `lastEventAt` lags. Reconnect unconditionally
+        // on foreground. Desktop keeps the heartbeat gate to avoid
+        // spamming reconnects on quick tab switches.
+        if (isTouchDevice) {
+          restart()
+          return
+        }
         if (Date.now() - lastEventAt < HEARTBEAT_TIMEOUT_MS) return
-        attempt?.abort()
+        restart()
       })
     })
 
@@ -241,6 +272,9 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         on: emitter.on.bind(emitter),
         listen: emitter.listen.bind(emitter),
         start,
+        restart,
+        reconnecting,
+        isTouchDevice,
       },
       createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
         const s = server.current
