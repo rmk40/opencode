@@ -8,15 +8,25 @@
 }
 
 @layer components {
-  @keyframes session-progress-whip {
+  /*
+   * Indeterminate progress glide. A narrow segment (~25% of the track)
+   * slides across with gentle easing: grows in from the left edge, then
+   * slides off the right. Calmer than a full-width whip sweep; reads as
+   * an ambient "working" hint rather than a laser across the screen,
+   * especially on mobile. clip-path inset is top/right/bottom/left, so
+   *   0%   → fully clipped on the right   (bar hidden)
+   *   50%  → visible between 35%–65%      (narrow segment centered)
+   *   100% → fully clipped on the left    (bar hidden)
+   */
+  @keyframes session-progress-glide {
     0% {
       clip-path: inset(0 100% 0 0 round 999px);
-      animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    48% {
-      clip-path: inset(0 0 0 0 round 999px);
-      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    50% {
+      clip-path: inset(0 35% 0 35% round 999px);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     100% {
@@ -30,7 +40,7 @@
     height: 2px;
     overflow: hidden;
     pointer-events: none;
-    opacity: 1;
+    opacity: 0.75;
     transition: opacity 220ms ease-out;
   }
 
@@ -44,8 +54,15 @@
     border-radius: 999px;
     background: var(--session-progress-color);
     clip-path: inset(0 100% 0 0 round 999px);
-    animation: session-progress-whip var(--session-progress-ms, 1800ms) infinite;
+    animation: session-progress-glide var(--session-progress-ms, 2400ms) infinite;
     will-change: clip-path;
+  }
+
+  @media (max-width: 767px) {
+    [data-component="session-progress"] {
+      height: 1.5px;
+      opacity: 0.6;
+    }
   }
 
   [data-component="getting-started"] {
@@ -80,6 +97,34 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  /*
+   * `content-visibility: auto` is a meaningful perf win on long sessions,
+   * but on iOS Safari it produces visible blank regions during fast scroll
+   * (the engine repeatedly skips paint on off-viewport turns and shows the
+   * `contain-intrinsic-size` placeholder before catching up). Combined
+   * with auto-scroll during streaming this looks like the screen
+   * "clearing" before content reappears.
+   *
+   * Gate by pointer capability: `(hover: hover) and (pointer: fine)`
+   * matches mice/trackpads and excludes touch-primary devices (iPhone,
+   * iPad, Android, ChromeOS/Surface in tablet mode). The underlying bug
+   * is WebKit-specific but a narrower UA-based gate would be fragile, so
+   * we accept the tradeoff of losing the optimization on Android Chrome
+   * phones (where the bug does not exist) in exchange for a stable,
+   * feature-detected gate. Hybrid laptops (Surface, Chromebook) typically
+   * report `pointer: fine` when a trackpad/mouse is attached, so in
+   * laptop mode they usually keep the perf win; tablet-mode sessions
+   * on those devices skip the optimization. Behavior varies across
+   * browser versions and driver stacks, so this is a heuristic rather
+   * than a hard guarantee.
+   */
+  @media (hover: hover) and (pointer: fine) {
+    .session-turn-cv-eligible {
+      content-visibility: auto;
+      contain-intrinsic-size: auto 500px;
     }
   }
 }
