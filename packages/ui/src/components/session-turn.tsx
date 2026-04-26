@@ -201,9 +201,16 @@ export function SessionTurn(
   const pending = createMemo(() => {
     if (typeof props.active === "boolean") return
     const messages = allMessages() ?? emptyMessages
-    return messages.findLast(
-      (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
-    )
+    // Only the LAST message can legitimately indicate pending work for the
+    // active turn. findLast over the full array would return any older
+    // assistant message stuck without time.completed (DB residue from a
+    // crashed stream), making sessions show 'active' on the wrong turn
+    // forever. If the last message exists, is an assistant message, and
+    // hasn't been finalized — it's pending. Otherwise nothing is.
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== "assistant") return
+    if (typeof last.time.completed === "number") return
+    return last as AssistantMessage
   })
 
   const pendingUser = createMemo(() => {
