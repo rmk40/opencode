@@ -314,13 +314,28 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     return items.filter((item) => !item.comment?.trim())
   })
 
-  const hasUserPrompt = createMemo(() => {
+  // Latch hasUserPrompt to true once it's been true for the current session.
+  // The underlying `sync.data.message[sessionID]` can transiently become
+  // empty during SSE updates, which would otherwise flip the placeholder
+  // from the stable "Ask anything..." back to the cycling example prompt
+  // ("Create a CLI command for...", etc.) for a single frame. That flash is
+  // visible in the input during streaming. Once we know the session has a
+  // user message, that fact cannot un-happen for that session, so we pin
+  // the value. The latch key is the session id, so navigating to another
+  // session restarts the observation.
+  let latchedSessionID: string | undefined
+  const hasUserPrompt = createMemo<boolean>((prev) => {
     const sessionID = params.id
-    if (!sessionID) return false
+    if (!sessionID) {
+      latchedSessionID = undefined
+      return false
+    }
+    if (prev && latchedSessionID === sessionID) return true
     const messages = sync.data.message[sessionID]
-    if (!messages) return false
-    return messages.some((m) => m.role === "user")
-  })
+    const has = !!messages && messages.some((m) => m.role === "user")
+    if (has) latchedSessionID = sessionID
+    return has
+  }, false)
 
   const [history, setHistory] = persisted(
     Persist.global("prompt-history", ["prompt-history.v1"]),
