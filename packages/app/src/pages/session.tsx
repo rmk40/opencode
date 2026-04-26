@@ -1916,50 +1916,89 @@ export default function Page() {
             width: sessionPanelWidth(),
           }}
         >
-          <div class="flex-1 min-h-0 overflow-hidden">
+          <div class="flex-1 min-h-0 overflow-hidden relative">
             <Switch>
               <Match when={params.id}>
                 <Show when={messagesReady()}>
-                  <MessageTimeline
-                    mobileChanges={mobileChanges()}
-                    mobileFallback={reviewContent({
-                      diffStyle: "unified",
-                      classes: {
-                        root: "pb-8",
-                        header: "px-4",
-                        container: "px-4",
-                      },
-                      loadingClass: "px-4 py-4 text-text-weak",
-                      emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
-                    })}
-                    actions={actions}
-                    scroll={ui.scroll}
-                    onResumeScroll={resumeScroll}
-                    setScrollRef={setScrollRef}
-                    onScheduleScrollState={scheduleScrollState}
-                    onAutoScrollHandleScroll={autoScroll.handleScroll}
-                    onMarkScrollGesture={markScrollGesture}
-                    hasScrollGesture={hasScrollGesture}
-                    onUserScroll={markUserScroll}
-                    onTurnBackfillScroll={historyWindow.onScrollerScroll}
-                    onAutoScrollInteraction={autoScroll.handleInteraction}
-                    centered={centered()}
-                    setContentRef={(el) => {
-                      content = el
-                      autoScroll.contentRef(el)
+                  {/*
+                    Mobile session/changes split: both panes mount once
+                    and toggle visibility via CSS. Previously the mobile
+                    Changes pane was passed as `mobileFallback` into
+                    MessageTimeline and gated by <Show fallback>, which
+                    UNMOUNTED the entire timeline subtree (autoScroll,
+                    ResizeObservers, all message <For> children, dock
+                    measurement) on every tap — making "back to Session"
+                    feel dead until the remount finished hundreds of ms
+                    later on long sessions. Keeping both subtrees mounted
+                    swaps the tab tap to an O(1) display toggle.
 
-                      const root = scroller
-                      if (root) scheduleScrollState(root)
-                    }}
-                    turnStart={historyWindow.turnStart()}
-                    historyMore={historyMore()}
-                    historyLoading={historyLoading()}
-                    onLoadEarlier={() => {
-                      void historyWindow.loadAndReveal()
-                    }}
-                    renderedUserMessages={historyWindow.renderedUserMessages()}
-                    anchor={anchor}
-                  />
+                    On desktop both `mobileChanges` and `mobileTab` are
+                    irrelevant — the Changes pane is rendered separately
+                    in the side panel; we hide this mobile-only changes
+                    sibling unconditionally on desktop via `md:hidden`.
+                  */}
+                  <div
+                    class="absolute inset-0 flex flex-col min-h-0"
+                    classList={{ hidden: mobileChanges() }}
+                    aria-hidden={mobileChanges()}
+                  >
+                    <MessageTimeline
+                      actions={actions}
+                      scroll={ui.scroll}
+                      onResumeScroll={resumeScroll}
+                      setScrollRef={setScrollRef}
+                      onScheduleScrollState={scheduleScrollState}
+                      onAutoScrollHandleScroll={autoScroll.handleScroll}
+                      onMarkScrollGesture={markScrollGesture}
+                      hasScrollGesture={hasScrollGesture}
+                      onUserScroll={markUserScroll}
+                      onTurnBackfillScroll={historyWindow.onScrollerScroll}
+                      onAutoScrollInteraction={autoScroll.handleInteraction}
+                      centered={centered()}
+                      setContentRef={(el) => {
+                        content = el
+                        autoScroll.contentRef(el)
+
+                        const root = scroller
+                        if (root) scheduleScrollState(root)
+                      }}
+                      turnStart={historyWindow.turnStart()}
+                      historyMore={historyMore()}
+                      historyLoading={historyLoading()}
+                      onLoadEarlier={() => {
+                        void historyWindow.loadAndReveal()
+                      }}
+                      renderedUserMessages={historyWindow.renderedUserMessages()}
+                      anchor={anchor}
+                    />
+                  </div>
+                  {/*
+                    Gated on `!isDesktop()` so the SessionReviewTab is only
+                    instantiated on mobile. On desktop the changes pane is
+                    rendered separately in the side panel via reviewPanel,
+                    and a second mounted instance here would register
+                    duplicate scroll refs (setTree('reviewScroll', el))
+                    and produce duplicate DOM ids that compete with the
+                    real desktop pane.
+                  */}
+                  <Show when={!isDesktop()}>
+                    <div
+                      class="absolute inset-0 overflow-hidden"
+                      classList={{ hidden: !mobileChanges() }}
+                      aria-hidden={!mobileChanges()}
+                    >
+                      {reviewContent({
+                        diffStyle: "unified",
+                        classes: {
+                          root: "pb-8",
+                          header: "px-4",
+                          container: "px-4",
+                        },
+                        loadingClass: "px-4 py-4 text-text-weak",
+                        emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
+                      })}
+                    </div>
+                  </Show>
                 </Show>
               </Match>
               <Match when={true}>
