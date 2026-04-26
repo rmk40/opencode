@@ -276,7 +276,15 @@ export function MessageTimeline(props: {
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
   })
-  const working = createMemo(() => !!pending() || sessionStatus().type !== "idle")
+  // Trust session_status as the single source of truth for "is this session
+  // currently working?". A previous attempt mixed in `!!pending()` here as a
+  // self-heal, but `pending()` reads the DB-persisted message list — any
+  // assistant message that crashed before reaching `time.completed = Date.now()`
+  // remains permanently incomplete in DB, so message-derived "working" is true
+  // forever for sessions that ever crashed mid-stream. session_status does
+  // reliably go idle on error/cancel/finish via processor halt, run-state
+  // cancel, and runner onIdle. Use status only.
+  const working = createMemo(() => sessionStatus().type !== "idle")
   const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
 
   const [timeoutDone, setTimeoutDone] = createSignal(true)
