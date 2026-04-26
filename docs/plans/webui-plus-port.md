@@ -103,14 +103,11 @@ md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)]`.
    - Source commit: rolled into `39a2e7637`.
    - Risk: zero on non-iOS.
 
-5. **`fix(app): preserve scroll position when restoring permission dock focus`**
-   - Files:
-     `packages/app/src/pages/session/composer/session-permission-dock.tsx`
-   - Changes: `el.focus({ preventScroll: true })` then
-     `el.scrollIntoView({ block: "nearest", behavior: "smooth" })`.
-   - Source: gap identified by audit B12; no specific upstream hash —
-     small mobile UX fix that was part of plus's mobile pass.
-   - Risk: low. Mobile UX improvement.
+5. **CANCELLED — no actual gap.** B12 audit narration was wrong: the
+   permission dock has no focus-restore code in either repo, and the
+   `preventScroll`+`scrollIntoView` pattern lives in
+   `session-question-dock.tsx` which is already present in current
+   (upstream factoring). Audit doc updated to mark B12 as "not a gap".
 
 6. **`fix(prompt): latch hasUserPrompt to stop placeholder flashing`**
    - Files: `packages/app/src/components/prompt-input.tsx` (memo only)
@@ -165,33 +162,25 @@ first.
     - Risk: medium. New visibility/lifecycle behavior — verify no
       regression in long-running sessions.
 
-11. **`fix(sync): reconcile session_status, todo, diff on forced refresh`**
-    - Files: `packages/app/src/context/sync.tsx`
-    - Changes: extend `force` branch in `sync.session.sync(id,
+11. **`fix(sync): reconcile session_status, todo, diff on forced refresh`** - Files: `packages/app/src/context/sync.tsx` - Changes: extend `force` branch in `sync.session.sync(id,
 {force:true})` to issue `client.session.status()`,
-      `client.session.diff()`, `client.session.todo()` wrapped in
-      `Promise.allSettled`; reconcile each into matching store.
-    - Source commit: `5a86c0320`.
-    - Risk: medium. Adds 3 network calls and 3 store writes per forced
-      refresh.
+    `client.session.diff()`, `client.session.todo()` wrapped in
+    `Promise.allSettled`; reconcile each into matching store. - Source commit: `5a86c0320`. - Risk: medium. Adds 3 network calls and 3 store writes per forced
+    refresh.
 
-12. **`feat(app): mobile refresh button with reconnect indicator in session header`**
-    - Files: `packages/app/src/components/session/session-header.tsx`;
-      `packages/app/src/i18n/en.ts` (add `session.header.refresh`).
-    - Changes: import `useGlobalSDK` and `createMediaQuery`; `isMobile =
+12. **`feat(app): mobile refresh button with reconnect indicator in session header`** - Files: `packages/app/src/components/session/session-header.tsx`;
+    `packages/app/src/i18n/en.ts` (add `session.header.refresh`). - Changes: import `useGlobalSDK` and `createMediaQuery`; `isMobile =
 (max-width: 767px)`, `isMd = (min-width: 768px)`; `refresh()`
-      calls `sync.session.sync(id, {force:true})` +
-      `globalSDK.event.restart()`; render tooltip-wrapped ghost button
-      at mobile widths swapping `Icon name="reset"` ↔ `Spinner` based on
-      `globalSDK.event.reconnecting()`. Search portal gated on `isMd()`.
-      Synchronous mount lookup with onMount fallback.
-    - Source commits: `a9ade1b73`, `b969a29e4`, `bdd5aab47`. Commit body
-      should enumerate.
-    - Risk: medium. Touches a heavily-used file. Verify desktop layout
-      unchanged. `session.header.refresh` only added to `en.ts` (matches
-      plus's scope; non-en locales remain a separate polish task —
-      `parity.test.ts` only enforces 2 specific keys, so this won't
-      regress CI).
+    calls `sync.session.sync(id, {force:true})` +
+    `globalSDK.event.restart()`; render tooltip-wrapped ghost button
+    at mobile widths swapping `Icon name="reset"` ↔ `Spinner` based on
+    `globalSDK.event.reconnecting()`. Search portal gated on `isMd()`.
+    Synchronous mount lookup with onMount fallback. - Source commits: `a9ade1b73`, `b969a29e4`, `bdd5aab47`. Commit body
+    should enumerate. - Risk: medium. Touches a heavily-used file. Verify desktop layout
+    unchanged. `session.header.refresh` only added to `en.ts` (matches
+    plus's scope; non-en locales remain a separate polish task —
+    `parity.test.ts` only enforces 2 specific keys, so this won't
+    regress CI).
 
 13. **`feat(app): portaled session/changes pill in mobile titlebar`**
     - Files: `packages/app/src/pages/session.tsx`
@@ -231,19 +220,15 @@ review thrash.
       the sidebar panel addition.
     - Risk: low. Desktop-only.
 
-15. **`fix(app): calmer progress glide animation + content-visibility gate`**
-    - Files: `packages/app/src/index.css`
-    - Changes: rename `session-progress-whip → session-progress-glide`
-      with new keyframes (narrow segment slide), default `2400ms`,
-      opacity `0.75`; mobile `1.5px / opacity 0.6`. Replace upstream
-      `fade-in` keyframes with
-      `@media (hover: hover) and (pointer: fine) {
+15. **`fix(app): calmer progress glide animation + content-visibility gate`** - Files: `packages/app/src/index.css` - Changes: rename `session-progress-whip → session-progress-glide`
+    with new keyframes (narrow segment slide), default `2400ms`,
+    opacity `0.75`; mobile `1.5px / opacity 0.6`. Replace upstream
+    `fade-in` keyframes with
+    `@media (hover: hover) and (pointer: fine) {
 .session-turn-cv-eligible { content-visibility: auto; ... } }`
-      so iOS Safari doesn't show blank scroll regions.
-    - Source commits: `2d497346a`, `db414bf27`, `b724285a3`. Verify
-      upstream's `8cc2c81d5` `fade-in` removal hasn't already cleaned it
-      before removing.
-    - Risk: low. Cosmetic + perf gate.
+    so iOS Safari doesn't show blank scroll regions. - Source commits: `2d497346a`, `db414bf27`, `b724285a3`. Verify
+    upstream's `8cc2c81d5` `fade-in` removal hasn't already cleaned it
+    before removing. - Risk: low. Cosmetic + perf gate.
 
 16. **`fix(ui): cap mobile bash output with fade indicator`**
     - Files: `packages/ui/src/components/message-part.css` +
@@ -262,20 +247,15 @@ review thrash.
       this whole plan. Run `bun typecheck` from `packages/ui` AND
       `packages/app`.
 
-17. **`fix(timeline): last-message-only pending guard + calmer mobile pace`**
-    - Files: `packages/app/src/pages/session/message-timeline.tsx`
-    - Changes: extract `PACE_NARROW_WIDTH=360`, `PACE_WIDE_WIDTH=1200`,
-      `PACE_NARROW_MS=3200`, `PACE_WIDE_MS=1800`; replace inline formula
-      with linear interp. Narrow `pending` to "only the last message can
-      indicate pending work" (current uses `findLast` — change to
-      last-element-only). Update `working` to `!!pending() ||
+17. **`fix(timeline): last-message-only pending guard + calmer mobile pace`** - Files: `packages/app/src/pages/session/message-timeline.tsx` - Changes: extract `PACE_NARROW_WIDTH=360`, `PACE_WIDE_WIDTH=1200`,
+    `PACE_NARROW_MS=3200`, `PACE_WIDE_MS=1800`; replace inline formula
+    with linear interp. Narrow `pending` to "only the last message can
+    indicate pending work" (current uses `findLast` — change to
+    last-element-only). Update `working` to `!!pending() ||
 sessionStatus().type !== "idle"`. Tighten `pb-16 → pb-4` mobile
-      turn-list bottom padding.
-    - Source commits: `2d497346a`, `f89d9034f`, rolled into the
-      calmer-progress effort.
-    - Preserve current's upstream `showSessionProgressBar` setting
-      integration.
-    - Risk: medium. The `working` derivation change is semantic.
+    turn-list bottom padding. - Source commits: `2d497346a`, `f89d9034f`, rolled into the
+    calmer-progress effort. - Preserve current's upstream `showSessionProgressBar` setting
+    integration. - Risk: medium. The `working` derivation change is semantic.
 
 18. **`feat(prompt): inline +/send buttons in mobile prompt input row`**
     - Files: `packages/app/src/components/prompt-input.tsx`

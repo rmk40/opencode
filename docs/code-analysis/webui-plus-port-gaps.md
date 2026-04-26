@@ -130,12 +130,12 @@ Substantial divergence here. `actualyze` is on the **newer upstream** for most o
 - **Original current (pre-port)**: `pb-3` only.
 - **Severity**: Minor. **Restoration**: trivial.
 
-#### B12. `packages/app/src/pages/session/composer/session-permission-dock.tsx` & `session-question-dock.tsx`
+#### B12. `packages/app/src/pages/session/composer/session-permission-dock.tsx` & `session-question-dock.tsx` — **NOT A GAP** (current is newer)
 
-- **Plus**: extracts the dock max-height computation into a shared `useDockMaxHeight({ property, getRoot })` helper that listens to `resize` + ResizeObserver, locates the sticky scroller header, and clamps against the visible viewport.
-- **Current**: `actualyze` already has the extracted `use-dock-max-height.ts` (newer upstream factoring) — **this is current-is-newer, not a gap.**
-- **Permission dock additionally** in plus: `el.focus({ preventScroll: true })` then `el.scrollIntoView({ block: "nearest", behavior: "smooth" })` on focus restore — keeps the focused option visible inside the scrollable list on mobile. **Current** has `el?.focus()` only — that **is** a gap.
-- **Severity**: Minor. **Restoration**: trivial.
+- **Plus**: inline dock max-height computation per file; `el?.focus()` only on focus restore.
+- **Current**: `useDockMaxHeight({ property, getRoot })` shared helper (upstream refactor); `session-question-dock.tsx` has `el.focus({ preventScroll: true }) + el.scrollIntoView({ block: "nearest", behavior: "smooth" })` (newer upstream). `session-permission-dock.tsx` has no focus restore in either version.
+- **Verification (commit 5 investigation)**: `grep -n "focus\|scrollIntoView" packages/app/src/pages/session/composer/session-permission-dock.tsx` returns no hits in either repo, so the audit's "permission dock additionally has preventScroll+scrollIntoView" claim was wrong. The pattern lives in `session-question-dock.tsx` and is already present in current.
+- **Severity**: not applicable. No port action required.
 
 #### B13. `packages/app/src/pages/session/message-timeline.tsx` — calmer mobile pace + last-message-only pending guard + progress-bar setting integration
 
