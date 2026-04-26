@@ -14,7 +14,9 @@ import {
   onMount,
   untrack,
   createResource,
+  createSignal,
 } from "solid-js"
+import { Portal } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -23,7 +25,6 @@ import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange
 import { createStore } from "solid-js/store"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Select } from "@opencode-ai/ui/select"
-import { Tabs } from "@opencode-ai/ui/tabs"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
@@ -33,6 +34,7 @@ import { useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
+import { useGlobalSDK } from "@/context/global-sdk"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
@@ -320,6 +322,7 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
 
 export default function Page() {
   const globalSync = useGlobalSync()
+  const globalSDK = useGlobalSDK()
   const layout = useLayout()
   const local = useLocal()
   const file = useFile()
@@ -518,7 +521,16 @@ export default function Page() {
     newSessionWorktree: "main",
     deferRender: false,
   })
-
+  // Look up the titlebar center mount synchronously where possible (the
+  // titlebar is in the persistent app layout, usually rendered above this
+  // route), and fall back to onMount only if not yet in DOM. This avoids
+  // the one-frame layout shift that a pure signal+onMount produced (the
+  // pill popped in after first paint).
+  const initialCenter = typeof document !== "undefined" ? document.getElementById("opencode-titlebar-center") : null
+  const [titlebarCenter, setTitlebarCenter] = createSignal<HTMLElement | null>(initialCenter)
+  if (!initialCenter) {
+    onMount(() => setTitlebarCenter(document.getElementById("opencode-titlebar-center")))
+  }
   const [followup, setFollowup] = persisted(
     Persist.workspace(sdk.directory, "followup", ["followup.v1"]),
     createStore<{
@@ -1059,15 +1071,22 @@ export default function Page() {
     }
 
     return (
-      <Select
-        options={changesOptions()}
-        current={store.changes}
-        label={label}
-        onSelect={(option) => option && setStore("changes", option)}
-        variant="ghost"
-        size="small"
-        valueClass="text-14-medium"
-      />
+      <div class="flex items-center gap-2 min-w-0">
+        <Select
+          options={changesOptions()}
+          current={store.changes}
+          label={label}
+          onSelect={(option) => option && setStore("changes", option)}
+          variant="ghost"
+          size="small"
+          valueClass="text-14-medium"
+        />
+        <Show when={hasReview()}>
+          <span class="text-12-regular text-text-weak whitespace-nowrap">
+            {language.t("session.review.filesChanged", { count: reviewCount() })}
+          </span>
+        </Show>
+      </div>
     )
   }
 
@@ -1778,7 +1797,42 @@ export default function Page() {
 
   onMount(() => {
     makeEventListener(document, "keydown", handleKeyDown)
+    // When the tab returns to foreground on a touch device, force a fresh
+    // session sync. The SSE stream on mobile drops frequently while
+    // backgrounded; globalSDK will also reconnect but the session's
+    // per-message state needs an explicit refetch to avoid showing a
+    // stale end-of-conversation after iOS suspends the runtime.
+    if (globalSDK.event.isTouchDevice) {
+      makeEventListener(document, "visibilitychange", () => {
+        if (document.visibilityState !== "visible") return
+        const id = params.id
+        if (!id) return
+        void sync.session.sync(id, { force: true })
+      })
+    }
   })
+
+  // Force-sync whenever the event stream finishes reconnecting (true -> false
+  // transition). Catches invisible reconnects (laptop sleep, flaky network,
+  // server restart) that don't coincide with a visibilitychange. We rate-limit
+  // to one force-sync per 800ms so back-to-back reconnects or the refresh
+  // button's restart+sync double-call don't amplify into multiple HTTP fans.
+  let lastReconnectSyncAt = 0
+  createEffect(
+    on(
+      () => globalSDK.event.reconnecting(),
+      (reconnecting, prev) => {
+        if (!(prev === true && reconnecting === false)) return
+        const id = params.id
+        if (!id) return
+        const now = Date.now()
+        if (now - lastReconnectSyncAt < 800) return
+        lastReconnectSyncAt = now
+        void sync.session.sync(id, { force: true })
+      },
+      { defer: true },
+    ),
+  )
 
   onCleanup(() => {
     if (reviewFrame !== undefined) cancelAnimationFrame(reviewFrame)
@@ -1797,29 +1851,58 @@ export default function Page() {
       {sessionSync() ?? ""}
       <SessionHeader />
       <div class="flex-1 min-h-0 flex flex-col md:flex-row">
-        <Show when={!isDesktop() && !!params.id}>
-          <Tabs value={store.mobileTab} class="h-auto">
-            <Tabs.List>
-              <Tabs.Trigger
-                value="session"
-                class="!w-1/2 !max-w-none"
-                classes={{ button: "w-full" }}
-                onClick={() => setStore("mobileTab", "session")}
+        <Show when={!isDesktop() && !!params.id && titlebarCenter()}>
+          {(mount) => (
+            <Portal mount={mount()}>
+              {/*
+                `touch-action: manipulation` removes iOS Safari's 300ms tap
+                delay and prevents double-tap-zoom from eating single taps
+                on these small segmented pill targets. The `py-2` heights
+                produce ~40px tap targets (close to iOS's 44px guideline)
+                so thumb taps reliably land on the intended button.
+              */}
+              <div
+                class="flex items-center rounded-md border border-border-weak-base bg-surface-panel overflow-hidden text-12-regular select-none"
+                style={{ "touch-action": "manipulation" }}
               >
-                {language.t("session.tab.session")}
-              </Tabs.Trigger>
-              <Tabs.Trigger
-                value="changes"
-                class="!w-1/2 !max-w-none !border-r-0"
-                classes={{ button: "w-full" }}
-                onClick={() => setStore("mobileTab", "changes")}
-              >
-                {hasReview()
-                  ? language.t("session.review.filesChanged", { count: reviewCount() })
-                  : language.t("session.review.change.other")}
-              </Tabs.Trigger>
-            </Tabs.List>
-          </Tabs>
+                <button
+                  type="button"
+                  onClick={() => setStore("mobileTab", "session")}
+                  class="px-3 py-2 transition-colors active:bg-surface-raised/60"
+                  style={{ "touch-action": "manipulation" }}
+                  classList={{
+                    "bg-surface-raised text-text-strong": store.mobileTab === "session",
+                    "text-text-weak": store.mobileTab !== "session",
+                  }}
+                >
+                  {language.t("session.tab.session")}
+                </button>
+                <div class="w-px h-4 bg-border-weak-base shrink-0" />
+                {/*
+                  Label is kept intentionally static ("Changes") on mobile.
+                  Previously it toggled to "N Files Changed" when review data
+                  was present, which reliably bricked the iOS PWA-standalone
+                  titlebar: the portaled content's in-place width mutation
+                  (short → wide) appears to corrupt WebKit's hit-test cache
+                  for the whole header region until the app is force-quit.
+                  The file count is surfaced in the review pane header
+                  (see changesTitle) so the information is not lost.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setStore("mobileTab", "changes")}
+                  class="px-3 py-2 transition-colors active:bg-surface-raised/60"
+                  style={{ "touch-action": "manipulation" }}
+                  classList={{
+                    "bg-surface-raised text-text-strong": store.mobileTab === "changes",
+                    "text-text-weak": store.mobileTab !== "changes",
+                  }}
+                >
+                  {language.t("session.review.change.other")}
+                </button>
+              </div>
+            </Portal>
+          )}
         </Show>
 
         {/* Session panel */}
@@ -1827,7 +1910,7 @@ export default function Page() {
           classList={{
             "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger flex-1 md:flex-none": true,
             "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-              !size.active() && !ui.reviewSnap,
+              isDesktop() && !size.active() && !ui.reviewSnap,
           }}
           style={{
             width: sessionPanelWidth(),
