@@ -124,10 +124,10 @@ Substantial divergence here. `actualyze` is on the **newer upstream** for most o
 - **Current**: `collapsed: false` always.
 - **Severity**: Moderate. **Restoration**: trivial (3-line change).
 
-#### B11. `packages/app/src/pages/session/composer/session-composer-region.tsx` — safe-area aware bottom padding
+#### B11. `packages/app/src/pages/session/composer/session-composer-region.tsx` — safe-area aware bottom padding — **PORTED** (commit 4)
 
-- **Plus**: bottom padding is `pb-[calc(env(safe-area-inset-bottom)+0.375rem)] md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)]`.
-- **Current**: `pb-3` only.
+- **Plus / Current (post-port)**: bottom padding is `pb-[calc(env(safe-area-inset-bottom)+0.375rem)] md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)]`.
+- **Original current (pre-port)**: `pb-3` only.
 - **Severity**: Minor. **Restoration**: trivial.
 
 #### B12. `packages/app/src/pages/session/composer/session-permission-dock.tsx` & `session-question-dock.tsx`
