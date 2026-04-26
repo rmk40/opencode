@@ -8,6 +8,24 @@
 
 - `actualyze` is the long-lived release branch for the `rmk40/opencode` fork. Merge upstream `dev` into it as needed; do not recreate/reset it unless explicitly asked.
 - The fork release pipeline is intentionally limited to CLI artifacts, optional draft GitHub releases, and optional GitHub Packages npm publishing under `@rmk40`. Do not add npmjs publishing, Homebrew, AUR, Docker/GHCR, desktop artifacts, signing, notarization, or updater promotion unless explicitly requested.
+
+### Fork Maintenance Philosophy
+
+The fork's mission (also stated in `README.md`) is to **dramatically improve the mobile and web UX** of opencode while **mirroring upstream OpenCode** rather than diverging from it. The decisions below operationalize that mission. Apply them to all work going forward unless the user explicitly says otherwise.
+
+- **Stay close to upstream on the core.** The fork carries patches for bugs and key issues that haven't landed upstream yet, plus the mobile/web UX work that motivated the fork. The core (CLI, server, session lifecycle, schemas, plugin API) tracks upstream.
+- **No API or schema breaking changes.** Sessions, plugins, and configurations that work against upstream `opencode` must work against this fork.
+- **Willing to deviate on UX.** Mobile and web client surfaces are where the fork actively differs from upstream. That's the point of the fork.
+- **Targeted, revertable commits.** Every commit going forward should be **scoped to one bug, one feature, or one refactor** — not necessarily one file, but one logical change. The reason: if upstream lands their own fix for the same problem, we **revert ours and take theirs**. We do not try to merge our version with upstream's; we replace ours wholesale. Targeted commits make that revert clean.
+  - "One file per commit" is too granular and adds noise. "One bug, one commit" is the rule.
+  - When the same bug touches several files, that's still one commit.
+  - When two bugs happen to touch the same file, that's two commits.
+- **Reference upstream linkage in commit messages.** When a commit addresses something with an open or merged upstream PR/issue, include `Refs upstream PR anomalyco/opencode#NNNNN` (or commit SHA) in the body. When upstream lands their version, future-you greps for that ref to find the fork commit to revert.
+- **Lift the idea, not the diff, when porting.** When an upstream PR predates a refactor we already have (e.g. a pre-Effect PR against post-Effect code), translate the intent into our current shape rather than reverting the refactor. Cite the source PR in the commit body either way.
+- **Upstream-merge cadence: release-tag-driven.** Merge upstream version tags (`vX.Y.Z`) into `actualyze` as they land. Don't merge arbitrary `origin/dev` HEAD; we want known-good upstream baselines. The merge process is documented in `docs/upstream-merge-process.md`.
+- **Upstream version stays in our tag.** Fork tags are `vX.Y.Z-aai.N` where `X.Y.Z` is the upstream baseline we merged from. The `aai.N` suffix resets to `1` whenever the upstream baseline bumps.
+- **Conflict resolution defaults during upstream merge.** Files we own (UI mobile/web work, fork-only scripts, fork docs, fork release pipeline): keep ours. Files upstream owns (CLI, server, plugin core, schemas): take theirs. Decision matrix is in `docs/upstream-merge-process.md`. When the matrix doesn't cover a case, default to **taking upstream** unless our divergence was explicitly intentional and documented.
+- **Contributions welcome under the same criteria.** External PRs that fix bugs upstream hasn't gotten to yet, or improve mobile/web UX while preserving upstream compatibility, are in scope. PRs that break upstream API/schema compatibility are not.
 - The implementation files are `.github/workflows/fork-release-artifacts.yml`, `script/fork-release-artifacts.sh`, the root `package.json` `release:fork` script, and `RELEASE_ARTIFACT_PIPELINE_PLAN.md`.
 - The canonical interface is the root package script. CI and manual runs should call `bun run release:fork -- <validate|build|package|release|npm-package|npm-publish|self-test> ...`; do not call `script/fork-release-artifacts.sh` or `packages/opencode/script/build.ts` directly in docs/workflows.
 - Valid versions are constructed from `--upstream-version X.Y.Z` and `--suffix aai.N`, producing `X.Y.Z-aai.N`. The suffix regex is `^aai\.[1-9][0-9]*$`; leading-zero suffixes like `aai.01` are invalid.
