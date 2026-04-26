@@ -21,12 +21,40 @@ see the upstream repository or the fork's `dev` branch. The upstream README
 files are preserved as `README.<lang>.md` in this directory but are not the
 canonical docs for this fork.
 
+## Mission
+
+The current focus of this fork is to **dramatically improve the mobile and
+web experience** of opencode. Long-running coding sessions deserve a UI
+that's pleasant to drive from a phone — iOS PWA support, sane mobile
+chrome, fast tab switching, calm progress indicators, mobile-first input
+ergonomics. That is where the active development is going for the
+foreseeable future.
+
+The fork's intent is to **mirror upstream OpenCode**, not diverge from it:
+
+- **The core stays compatible.** No API breaking changes. No schema
+  breaking changes. Sessions, plugins, and configurations that work
+  against upstream `opencode` work against this fork.
+- **The fork carries patches** for bugs and key issues that haven't
+  landed upstream yet, plus the mobile/web UI work that motivated the
+  fork in the first place.
+- **Some of this work is intended to flow back upstream.** Where a fix
+  or feature is generally useful, the goal is to land it in upstream
+  OpenCode rather than keep it fork-only forever. The fork exists so
+  the work can ship and evolve without waiting on upstream's review
+  cadence.
+
+**Contributions welcome** under that criteria — bug fixes, mobile/web
+UX improvements, and patches that maintain upstream compatibility. Open
+an issue or PR against the [`actualyze`](https://github.com/rmk40/opencode/tree/actualyze)
+branch.
+
 ## Quick Facts
 
 - **Repository:** `rmk40/opencode`
 - **Release branch:** `actualyze`
 - **Release channel:** `aai`
-- **Tag format:** `vX.Y.Z-aai.N` (e.g. `v1.14.24-aai.4`)
+- **Tag format:** `vX.Y.Z-aai.N` (e.g. `v1.14.24-aai.6`)
 - **npm package:** `@rmk40/opencode`
 - **npm registry:** `https://npm.pkg.github.com` (GitHub Packages)
 - **GitHub releases:** [`rmk40/opencode/releases`](https://github.com/rmk40/opencode/releases) (always `--prerelease`)
