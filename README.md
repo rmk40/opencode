@@ -537,9 +537,9 @@ contributor docs (provider additions, PR rules, deeper debugger setup).
 
 ## Reference
 
-- [`docs/FORK_RELEASE_PIPELINE.md`](docs/FORK_RELEASE_PIPELINE.md) —
+- [`docs/fork-release-pipeline.md`](docs/fork-release-pipeline.md) —
   detailed operator/agent reference for every subcommand and job.
-- [`RELEASE_ARTIFACT_PIPELINE_PLAN.md`](RELEASE_ARTIFACT_PIPELINE_PLAN.md) —
+- [`release-artifact-pipeline-plan.md`](release-artifact-pipeline-plan.md) —
   long-form design rationale.
 - [`AGENTS.md`](AGENTS.md) — short operating notes for agents working
   in this repo.
@@ -556,7 +556,7 @@ Standards:
 - Every change to the release pipeline must keep
   `bun run release:fork -- self-test` green.
 - Every public API or CLI behavior change should update
-  `docs/FORK_RELEASE_PIPELINE.md` in the same change-set.
+  `docs/fork-release-pipeline.md` in the same change-set.
 - Don't reuse a published `aai.N` suffix. Ever.
 
 ---

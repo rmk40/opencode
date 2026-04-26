@@ -52,9 +52,9 @@ Version format:
 .github/workflows/fork-release-artifacts.yml   workflow definition
 script/fork-release-artifacts.sh               release helper (canonical via package script)
 package.json (root)                            exposes "release:fork": "bash script/fork-release-artifacts.sh"
-RELEASE_ARTIFACT_PIPELINE_PLAN.md              long-form design plan
+release-artifact-pipeline-plan.md              long-form design plan
 AGENTS.md                                      day-to-day operating notes
-docs/FORK_RELEASE_PIPELINE.md                  this document
+docs/fork-release-pipeline.md                  this document
 ```
 
 The canonical interface is the root package script. Always invoke the
@@ -551,7 +551,7 @@ Implementation files referenced by this document:
 
 Adjacent design documents:
 
-- `RELEASE_ARTIFACT_PIPELINE_PLAN.md` — long-form design rationale
+- `release-artifact-pipeline-plan.md` — long-form design rationale
   for the pipeline.
 - `AGENTS.md` — short operating notes shared with the rest of the
   agent ecosystem.
