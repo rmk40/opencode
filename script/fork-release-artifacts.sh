@@ -172,8 +172,19 @@ ensure_tag_commit_on_branch() {
   mkdir -p "$WORKDIR"
   local commit status body
   commit="$(sha_value)"
+  # Authenticate when a token is available. Unauthenticated requests
+  # share a 60/hr per-IP budget against api.github.com which is trivially
+  # exhausted by busy CI runners; authenticated requests get 5000/hr per
+  # token. CI exposes GITHUB_TOKEN; the package script also exports
+  # GH_TOKEN. Either is acceptable for this read-only compare endpoint.
+  local auth_args=()
+  local auth_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [ -n "$auth_token" ]; then
+    auth_args=(-H "Authorization: Bearer $auth_token")
+  fi
   status="$(curl -sS -o "$WORKDIR/compare.json" -w "%{http_code}" \
     -H "Accept: application/vnd.github+json" \
+    "${auth_args[@]}" \
     "https://api.github.com/repos/$(repo_name)/compare/$TARGET_BRANCH...$commit")"
   case "$status" in
     200)
