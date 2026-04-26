@@ -174,12 +174,12 @@ The current `dashboard.tsx` is the upstream-shaped grid view with `state` store 
 
 - **Severity**: Major (mobile dashboard UX). **Restoration**: large + risky. The plus version is built on the older dashboard skeleton; the upstream version is structurally cleaner. Recommended approach: cherry-pick the **layout/UX intent** of the mobile commits (compact rows, titlebar slots, hover-only reveal, no-shift cards) onto the upstream skeleton rather than reverting to plus's structure. Watch for interaction with B1 (titlebar mounts).
 
-#### B15. `packages/ui/src/assets/favicon/site.webmanifest` and `packages/app/public/site.webmanifest`
+#### B15. `packages/ui/src/assets/favicon/site.webmanifest` and `packages/app/public/site.webmanifest` — **PORTED** (commit 2)
 
-- **Plus**: top-level `start_url: "/"`, `display: "standalone"`, `theme_color: "#131010"`, `background_color: "#131010"`, icon `purpose: "any maskable"`.
-- **Current**: no `start_url`, theme/background `#ffffff`, icon `purpose: "maskable"` only.
+- **Plus / Current (post-port)**: top-level `start_url: "/"`, `display: "standalone"`, `theme_color: "#131010"`, `background_color: "#131010"`, icon `purpose: "any maskable"`.
+- **Original current (pre-port)**: no `start_url`, theme/background `#ffffff`, icon `purpose: "maskable"` only.
 - **Why this matters**: dark theme color matches the app's dark default; `any maskable` lets iOS use the icon both flat and masked; missing `start_url` reduces "Add to Home Screen" reliability.
-- **Severity**: Minor. **Restoration**: trivial. Both files need to stay in sync.
+- **Severity**: Minor. **Restoration**: trivial. **Note**: `packages/app/public/site.webmanifest` is a symlink to `packages/ui/src/assets/favicon/site.webmanifest` in both repos, so editing the ui-package file updates both.
 
 #### B16. `packages/app/index.html` — **PORTED** (commit 1)
 
@@ -408,8 +408,8 @@ For the dashboard pill (search/sort):
 
 ### Restoration outline (pill-specific, in order)
 
-1. **`packages/app/index.html`** — add `viewport-fit=cover`, `apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style: black-translucent`; root div `h-svh`. _No code dependencies._ (B16)
-2. **`packages/ui/src/assets/favicon/site.webmanifest`** + **`packages/app/public/site.webmanifest`** — add `start_url`, `display`, `theme_color`, `background_color`; icons `purpose: "any maskable"`. _Cosmetic, but required for the iOS install path that activates standalone mode._ (B15)
+1. **`packages/app/index.html`** — add `viewport-fit=cover`, `apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style: black-translucent`; root div `h-svh`. _No code dependencies._ (B16) **PORTED commit 1.**
+2. **`packages/ui/src/assets/favicon/site.webmanifest`** (symlinked from `packages/app/public/site.webmanifest`) — add `start_url`, `display`, `theme_color`, `background_color`; icons `purpose: "any maskable"`. _Cosmetic, but required for the iOS install path that activates standalone mode._ (B15) **PORTED commit 2.**
 3. **`packages/app/src/components/titlebar.tsx`** — switch column layout to `[auto_minmax(0,1fr)_auto]`, add `relative z-30 isolate`, add `padding-top: env(safe-area-inset-top)` + `height: calc(env(safe-area-inset-top) + 2.5rem)`, flatten center mount (drop nested pointer-events pair, add `touch-action: manipulation`). (B1)
 4. **`packages/app/src/index.css`** — add the `@media all and (display-mode: standalone) { #root { height: 100lvh; } }` rule outside `@layer components`. (B8 PWA branch)
 5. **`packages/app/src/context/global-sdk.tsx`** — additively expose `restart`, `reconnecting`, `isTouchDevice`. _No consumer changes required by this commit alone._ (B3)
@@ -428,8 +428,8 @@ Three phases, ordered by dependency depth and risk.
 - **B11** safe-area composer padding _(trivial)_
 - **B10** todo dock collapse-by-default on mobile _(trivial)_
 - **B12** permission dock focus-with-scrollIntoView _(trivial)_
-- **B15** site.webmanifest in both locations _(trivial)_
-- **B16** index.html PWA meta tags _(trivial, but a prerequisite for B1/B8/B11 to actually take effect)_
+- **B15** site.webmanifest (single file via symlink) _(trivial)_ **— PORTED commit 2**
+- **B16** index.html PWA meta tags _(trivial, but a prerequisite for B1/B8/B11 to actually take effect)_ **— PORTED commit 1**
 - **B17/B22–B36** — re-verify nothing here is a gap (per the table they are all current-is-newer); skip
 - **B7 latch only** — the `hasUserPrompt` 5-line memo change _(trivial; do not include the inline-buttons layout in this phase)_
 
