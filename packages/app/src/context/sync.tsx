@@ -496,7 +496,53 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                     limit,
                   })
 
-            await Promise.all([sessionReq, messagesReq])
+            // On a forced refresh, also reconcile the ancillary per-session
+            // stores that ride on SSE (session_status, todo, diff). Missed
+            // status/todo/diff events during a mobile background/resume would
+            // otherwise leave "Thinking" + stop button stuck on a finished
+            // session until the user interacts.
+            //
+            // Ancillary requests are wrapped in allSettled so a transient
+            // failure in one (e.g. diff on a very large session) does not
+            // fail the whole force-sync and leave status stuck.
+            const ancillaryReqs: Array<Promise<unknown>> = []
+            if (opts?.force) {
+              // status() returns the whole directory map; apply every entry
+              // so invisible sessions in the sidebar also stop showing stale
+              // busy/idle state after reconnect.
+              ancillaryReqs.push(
+                retry(() => client.session.status()).then((res) => {
+                  if (!tracked(directory, sessionID)) return
+                  const map = res.data
+                  if (!map) return
+                  batch(() => {
+                    for (const [sid, status] of Object.entries(map)) {
+                      setStore("session_status", sid, reconcile(status))
+                    }
+                  })
+                }),
+              )
+              ancillaryReqs.push(
+                retry(() => client.session.diff({ sessionID })).then((diff) => {
+                  if (!tracked(directory, sessionID)) return
+                  setStore("session_diff", sessionID, reconcile(list(diff.data), { key: "file" }))
+                }),
+              )
+              ancillaryReqs.push(
+                retry(() => client.session.todo({ sessionID })).then((todo) => {
+                  if (!tracked(directory, sessionID)) return
+                  const items = todo.data ?? []
+                  setStore("todo", sessionID, reconcile(items, { key: "id" }))
+                  globalSync.todo.set(sessionID, items)
+                }),
+              )
+            }
+
+            await Promise.all([
+              sessionReq,
+              messagesReq,
+              ...(ancillaryReqs.length ? [Promise.allSettled(ancillaryReqs)] : []),
+            ])
           })
         },
         async diff(sessionID: string, opts?: { force?: boolean }) {
