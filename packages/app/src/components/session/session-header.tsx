@@ -9,9 +9,11 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/shared/util/path"
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createMediaQuery } from "@solid-primitives/media"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
+import { useGlobalSDK } from "@/context/global-sdk"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
@@ -138,7 +140,16 @@ export function SessionHeader() {
   const settings = useSettings()
   const sync = useSync()
   const terminal = useTerminal()
+  const globalSDK = useGlobalSDK()
   const { params, view } = useSessionLayout()
+
+  const isMobile = createMediaQuery("(max-width: 767px)")
+  const reconnecting = createMemo(() => globalSDK.event.reconnecting())
+  const refresh = () => {
+    const id = params.id
+    if (id) void sync.session.sync(id, { force: true })
+    globalSDK.event.restart()
+  }
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -154,6 +165,7 @@ export function SessionHeader() {
   const hotkey = createMemo(() => command.keybind("file.open"))
   const os = createMemo(() => detectOS(platform))
   const isDesktopBeta = platform.platform === "desktop" && import.meta.env.VITE_OPENCODE_CHANNEL === "beta"
+  const isMd = createMediaQuery("(min-width: 768px)")
   const search = createMemo(() => !isDesktopBeta || settings.general.showSearch())
   const tree = createMemo(() => !isDesktopBeta || settings.general.showFileTree())
   const term = createMemo(() => !isDesktopBeta || settings.general.showTerminal())
@@ -268,24 +280,30 @@ export function SessionHeader() {
       })
       .catch((err: unknown) => showRequestError(language, err))
   }
-
-  const [centerMount, setCenterMount] = createSignal<HTMLElement | null>(null)
-  const [rightMount, setRightMount] = createSignal<HTMLElement | null>(null)
-  onMount(() => {
-    setCenterMount(document.getElementById("opencode-titlebar-center"))
-    setRightMount(document.getElementById("opencode-titlebar-right"))
-  })
-
+  // Look up the titlebar mount points synchronously where possible (the
+  // titlebar is in the persistent app layout, usually rendered above this
+  // component), and fall back to onMount otherwise. Avoids the one-frame
+  // layout shift in the titlebar that a pure signal+onMount produced.
+  const initialCenter = typeof document !== "undefined" ? document.getElementById("opencode-titlebar-center") : null
+  const initialRight = typeof document !== "undefined" ? document.getElementById("opencode-titlebar-right") : null
+  const [centerMount, setCenterMount] = createSignal<HTMLElement | null>(initialCenter)
+  const [rightMount, setRightMount] = createSignal<HTMLElement | null>(initialRight)
+  if (!initialCenter || !initialRight) {
+    onMount(() => {
+      if (!initialCenter) setCenterMount(document.getElementById("opencode-titlebar-center"))
+      if (!initialRight) setRightMount(document.getElementById("opencode-titlebar-right"))
+    })
+  }
   return (
     <>
-      <Show when={search() && centerMount()}>
+      <Show when={search() && isMd() && centerMount()}>
         {(mount) => (
           <Portal mount={mount()}>
             <Button
               type="button"
               variant="ghost"
               size="small"
-              class="hidden md:flex w-[240px] max-w-full min-w-0 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-panel shadow-none cursor-default"
+              class="flex w-[240px] max-w-full min-w-0 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-panel shadow-none cursor-default"
               onClick={() => command.trigger("file.open")}
               aria-label={language.t("session.header.searchFiles")}
             >
@@ -312,6 +330,22 @@ export function SessionHeader() {
         {(mount) => (
           <Portal mount={mount()}>
             <div class="flex items-center gap-2">
+              <Show when={isMobile()}>
+                <Tooltip placement="bottom" value={language.t("session.header.refresh")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={refresh}
+                    aria-label={language.t("session.header.refresh")}
+                    data-slot="session-refresh"
+                    data-reconnecting={reconnecting() ? "" : undefined}
+                  >
+                    <Show when={reconnecting()} fallback={<Icon size="small" name="reset" />}>
+                      <Spinner class="size-3.5" style={{ color: "var(--icon-base)" }} />
+                    </Show>
+                  </Button>
+                </Tooltip>
+              </Show>
               <Show when={projectDirectory()}>
                 <div class="hidden xl:flex items-center">
                   <Show
