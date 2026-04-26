@@ -83,7 +83,7 @@ For each entry: **file** · **what plus has** · **what current lacks** · sever
 #### B6. `packages/app/src/pages/layout.tsx` — desktop dashboard "Open projects" sidebar list
 
 - **Plus**: when on `/` with projects open in the sidebar (`!params.dir && !panelProps.mobile && layout.projects.list().length > 0`), the sidebar shows an "Open projects" panel listing all open projects with name + truncated path that opens that project on click. Wrapped in a `<Switch>` with the empty state as the other branch.
-- **Plus also**: removed `<DebugBar />` from the persistent layout (commit `f49909844 fix: remove dev debug bar overlay`); deletes the unused `DebugBar` import.
+- **Plus also**: removed `<DebugBar />` from the persistent layout (commit `f49909844 fix: remove dev debug bar overlay`); deletes the unused `DebugBar` import. **PORTED** (commit 7).
 - **Plus also**: extra comment/guard "Don't autoselect when on the dashboard (/) — let user browse projects manually".
 - **Plus also**: uses `platform.update!() + platform.restart!()` (two-call shape); current uses a single `platform.updateAndRestart!()` because `platform.tsx` was consolidated upstream — this is a current-is-newer pattern, **not** a gap (already current).
 - **Current**: empty-state branch only — no "Open projects" panel for desktop dashboard. `DebugBar` is mounted in dev.
