@@ -13,6 +13,8 @@
 
 The fork's mission (also stated in `README.md`) is to **dramatically improve the mobile and web UX** of opencode while **mirroring upstream OpenCode** rather than diverging from it. The decisions below operationalize that mission. Apply them to all work going forward unless the user explicitly says otherwise.
 
+**See [`docs/fork-maintenance.md`](docs/fork-maintenance.md) for the full operating manual** — decision tree for any incoming change, runbook for checking upstream PRs/issues before patching, sweep procedure for reverting our patches when upstream lands theirs, and conflict-resolution defaults. The bullets below are the philosophy summary; the doc is the procedure.
+
 - **Stay close to upstream on the core.** The fork carries patches for bugs and key issues that haven't landed upstream yet, plus the mobile/web UX work that motivated the fork. The core (CLI, server, session lifecycle, schemas, plugin API) tracks upstream.
 - **No API or schema breaking changes.** Sessions, plugins, and configurations that work against upstream `opencode` must work against this fork.
 - **Willing to deviate on UX.** Mobile and web client surfaces are where the fork actively differs from upstream. That's the point of the fork.
