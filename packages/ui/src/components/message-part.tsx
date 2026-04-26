@@ -56,6 +56,7 @@ import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { useLocation } from "@solidjs/router"
+import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { attached, inline, kind } from "./message-file"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
@@ -1838,6 +1839,50 @@ ToolRegistry.register({
       setTimeout(() => setCopied(false), 2000)
     }
 
+    // Track whether the bash output is actually scrollable and whether
+    // the user is at the bottom. The mobile fade-out mask is CSS-gated on
+    // these two data attributes so it never fades a short non-scrolling
+    // output and never fades text the user has scrolled to reach.
+    //
+    // The ref is held in a signal rather than a plain variable because
+    // BasicTool wraps children in a Kobalte Collapsible.Content, which
+    // unmounts its subtree while collapsed. With shellToolPartsExpanded
+    // default false, the bash-scroll element does not exist at onMount
+    // time; using a signal lets effects re-run when the user expands
+    // the collapsible and the ref becomes defined.
+    const [scrollRef, setScrollRef] = createSignal<HTMLDivElement | undefined>()
+    const updateScrollState = (el: HTMLDivElement) => {
+      const overflow = el.scrollHeight > el.clientHeight + 1
+      // 6px tolerance on atBottom handles iOS rubber-band overscroll and
+      // sub-pixel scrollTop values from pinch-zoomed pages.
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 6
+      const nextOverflow = overflow ? "true" : "false"
+      const nextAtBottom = atBottom ? "true" : "false"
+      if (el.dataset.overflow !== nextOverflow) el.dataset.overflow = nextOverflow
+      if (el.dataset.atBottom !== nextAtBottom) el.dataset.atBottom = nextAtBottom
+    }
+    createEffect(() => {
+      // Track text changes so streaming updates re-evaluate overflow state.
+      text()
+      const el = scrollRef()
+      if (!el) return
+      // queueMicrotask (not rAF): createEffect runs after Solid has committed
+      // DOM updates for this tick, so reading scrollHeight synchronously here
+      // already sees the new content. queueMicrotask is a defensive defer for
+      // any subcomponent that might flush on microtask boundary; using rAF
+      // would create a visible "unfaded" frame before the mask state is set.
+      queueMicrotask(() => updateScrollState(el))
+    })
+    createEffect(() => {
+      const el = scrollRef()
+      if (!el) return
+      updateScrollState(el)
+      createResizeObserver(el, () => updateScrollState(el))
+      const onScroll = () => updateScrollState(el)
+      el.addEventListener("scroll", onScroll, { passive: true })
+      onCleanup(() => el.removeEventListener("scroll", onScroll))
+    })
+
     return (
       <BasicTool
         {...props}
@@ -1872,7 +1917,7 @@ ToolRegistry.register({
               />
             </Tooltip>
           </div>
-          <div data-slot="bash-scroll" data-scrollable>
+          <div ref={setScrollRef} data-slot="bash-scroll" data-scrollable data-overflow="false" data-at-bottom="true">
             <pre data-slot="bash-pre">
               <code>{text()}</code>
             </pre>

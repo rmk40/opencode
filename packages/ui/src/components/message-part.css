@@ -397,6 +397,31 @@
     &::-webkit-scrollbar {
       display: none;
     }
+
+    /*
+     * On mobile the desktop 240px cap with a hidden scrollbar feels
+     * truncated because there is no scrollable affordance visible. But
+     * removing the cap entirely makes long bash output relayout the
+     * outer page on every stream chunk during LLM streaming, which the
+     * user perceives as "the screen clears before being repopulated".
+     * Use a viewport-relative cap so the inner box keeps its own
+     * scroll context and the outer timeline does not grow unboundedly.
+     *
+     * The fade-out mask is gated on `data-overflow="true"` and
+     * `data-at-bottom="false"`, set imperatively from the bash tool
+     * effect when scrollHeight exceeds clientHeight and the user has
+     * not yet scrolled to the bottom. This avoids fading the last
+     * line of short outputs and avoids fading text the user can
+     * actually read once they reach the end.
+     */
+    @media (max-width: 767px) {
+      max-height: 60vh;
+
+      &[data-overflow="true"][data-at-bottom="false"] {
+        mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent);
+        -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent);
+      }
+    }
   }
 
   [data-slot="bash-pre"] {
