@@ -155,18 +155,12 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   })
   const isWorking = createMemo(() => {
     if (hasPermissions()) return false
-    const pending = (sessionStore.message[props.session.id] ?? []).findLast(
-      (message) =>
-        message.role === "assistant" &&
-        typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
-    )
+    // Trust session_status only. Reading the DB-persisted message list for
+    // an incomplete assistant is a permanent false positive for sessions
+    // that ever crashed mid-stream — those messages stay incomplete forever
+    // in DB. session_status reliably clears to idle on error/cancel/finish.
     const status = sessionStore.session_status[props.session.id]
-    return (
-      pending !== undefined ||
-      status?.type === "busy" ||
-      status?.type === "retry" ||
-      (status !== undefined && status.type !== "idle")
-    )
+    return status !== undefined && status.type !== "idle"
   })
 
   const tint = createMemo(() => messageAgentColor(sessionStore.message[props.session.id], sessionStore.agent))
