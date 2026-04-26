@@ -1516,10 +1516,11 @@ export default function Page() {
     })
 
   const busy = (sessionID: string) => {
-    if ((sync.data.session_status[sessionID] ?? { type: "idle" as const }).type !== "idle") return true
-    return (sync.data.message[sessionID] ?? []).some(
-      (item) => item.role === "assistant" && typeof item.time.completed !== "number",
-    )
+    // Trust session_status only. The DB-persisted message-list `some(incomplete
+    // assistant)` check is a permanent false positive for sessions that ever
+    // crashed mid-stream — those assistant messages stay incomplete forever in
+    // DB. session_status reliably clears to idle on error/cancel/finish.
+    return (sync.data.session_status[sessionID] ?? { type: "idle" as const }).type !== "idle"
   }
 
   const queuedFollowups = createMemo(() => {
