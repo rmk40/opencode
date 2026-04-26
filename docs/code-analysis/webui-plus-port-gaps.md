@@ -193,7 +193,7 @@ The current `dashboard.tsx` is the upstream-shaped grid view with `state` store 
 - **Current** has the `arrow-undo-down` glyph (added by upstream `4712f0f3c` for shell-mode cancel UI). **Plus** lacks it.
 - This is **current-is-newer, not a gap.**
 
-#### B18. `packages/app/src/context/global-sync.tsx` — persisted project cache
+#### B18. `packages/app/src/context/global-sync.tsx` — persisted project cache — **PORTED** (commit 19)
 
 - **Plus**: persists the global project list to `Persist.global("globalSync.project", ["globalSync.project.v1"])` via `persisted()`; rehydrates from cache on mount when nothing has been written yet; sanitizes via `sanitizeProject` before write; uses an `active` flag + `projectWritten` flag to avoid clobbering a fresh server payload with stale cached data; replaces `setGlobalStore("project", produce(next))` with a `cacheProjects()` after every write.
 - **Current**: no project cache; project list is purely live, fetched on every cold start.
@@ -201,7 +201,7 @@ The current `dashboard.tsx` is the upstream-shaped grid view with `state` store 
 - **Why this matters**: Cold-start project list flash; the cache means the sidebar renders instantly with the previous list while the live fetch is in flight.
 - **Severity**: Moderate. **Restoration**: medium. `persisted` + `Persist` machinery already exists in `@/utils/persist`; no new deps. Risk is low — additive.
 
-#### B19. `packages/app/src/context/global-sync/child-store.ts` — global project metadata seed + late hydration
+#### B19. `packages/app/src/context/global-sync/child-store.ts` — global project metadata seed + late hydration — **PORTED** (commit 19; only the projectMeta seeding + onPersistedInit(meta[2]) — current keeps its newer pathQuery-based path lazy load, plus uses synchronous path init)
 
 - **Plus**: reads `meta[0].value` on initial child store creation and seeds `projectMeta` from it; on `meta[2]` (persisted-init promise) resolves, if the live `child[0].projectMeta` is still equal to the initial value, replaces with the persisted value. Removes the `useQuery(loadPathQuery)` indirection and uses a literal default `path` shape until SSE updates arrive.
 - **Current**: lazy `useQuery` lookup for path; `projectMeta: undefined` initial.
@@ -322,11 +322,11 @@ Listed newest first. **In** = present in actualyze; **Out** = not present; **OOS
 | `c0d4b749b`                                                             | revert(ios): remove --kb-inset keyboard tracker entirely                          | yes         | **n/a**                         | reverted in plus too                                                        |
 | `27037c1d2`                                                             | fix(ios): remove visualViewport scroll listener from kb-inset                     | yes         | **n/a**                         | reverted in plus too                                                        |
 | `f89d9034f`                                                             | fix(mobile): reduce turn list bottom padding pb-16 → pb-4                         | yes         | **PORTED** (commit 17)          | B13                                                                         |
-| `c9517a7dd`                                                             | fix(mobile): vertically center + and send buttons in input row                    | yes         | **PORTED** (commit 18)    | B7                                                                          |
-| `11ddf8f5e`                                                             | fix(mobile): tighten input area spacing                                           | yes         | **PORTED** (commit 18)    | B7                                                                          |
+| `c9517a7dd`                                                             | fix(mobile): vertically center + and send buttons in input row                    | yes         | **PORTED** (commit 18)          | B7                                                                          |
+| `11ddf8f5e`                                                             | fix(mobile): tighten input area spacing                                           | yes         | **PORTED** (commit 18)          | B7                                                                          |
 | `b663fb787`                                                             | fix(ios): keyboard inset via --kb-inset padding-bottom on root                    | yes         | **Out**                         | superseded — but final `c0d4b749b` revert means this should also be skipped |
 | `eef827240`/`5f478dfcc`/`d5f194363`/`b41c62619`/`35ddd1dea`/`e935d5a95` | iOS keyboard experiments and reverts                                              | yes         | **n/a**                         | net-zero in plus                                                            |
-| `0842f5ead`                                                             | feat(mobile): inline + and send buttons with prompt input text                    | yes         | **PORTED** (commit 18)    | B7                                                                          |
+| `0842f5ead`                                                             | feat(mobile): inline + and send buttons with prompt input text                    | yes         | **PORTED** (commit 18)          | B7                                                                          |
 | `bdd5aab47`                                                             | fix: gate session-header center portal on md+ breakpoint                          | yes         | **PORTED** (commit 12)          | B2                                                                          |
 | `c9d53ddfb`                                                             | feat(mobile): move session/changes tabs into titlebar center as segmented control | yes         | **PORTED** (commit 13)          | B5 (headline)                                                               |
 | `3f1d38691`                                                             | fix: update manifest in packages/ui source and app/public                         | yes         | **PORTED** (commit 2)           | B15                                                                         |
