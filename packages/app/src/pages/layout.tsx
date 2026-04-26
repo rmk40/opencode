@@ -4,11 +4,13 @@ import {
   createMemo,
   createResource,
   For,
+  Match,
   on,
   onCleanup,
   onMount,
   ParentProps,
   Show,
+  Switch,
   untrack,
   type Accessor,
 } from "solid-js"
@@ -150,6 +152,7 @@ export default function Layout(props: ParentProps) {
   const currentDir = createMemo(() => route().dir)
 
   const [state, setState] = createStore({
+    // Don't autoselect when on the dashboard (/) — let user browse projects manually
     autoselect: !initialDirectory && location.pathname !== "/",
     busyWorkspaces: {} as Record<string, boolean>,
     hoverProject: undefined as string | undefined,
@@ -2085,21 +2088,54 @@ export default function Layout(props: ParentProps) {
         <Show
           when={project()}
           fallback={
-            <Show when={empty()}>
-              <div class="flex-1 min-h-0 -mt-4 flex items-center justify-center px-6 pb-64 text-center">
-                <div class="mt-8 flex max-w-60 flex-col items-center gap-6 text-center">
-                  <div class="flex flex-col gap-3">
-                    <div class="text-14-medium text-text-strong">{language.t("sidebar.empty.title")}</div>
-                    <div class="text-14-regular text-text-base" style={{ "line-height": "var(--line-height-normal)" }}>
-                      {language.t("sidebar.empty.description")}
+            <Switch>
+              <Match when={empty()}>
+                <div class="flex-1 min-h-0 -mt-4 flex items-center justify-center px-6 pb-64 text-center">
+                  <div class="mt-8 flex max-w-60 flex-col items-center gap-6 text-center">
+                    <div class="flex flex-col gap-3">
+                      <div class="text-14-medium text-text-strong">{language.t("sidebar.empty.title")}</div>
+                      <div
+                        class="text-14-regular text-text-base"
+                        style={{ "line-height": "var(--line-height-normal)" }}
+                      >
+                        {language.t("sidebar.empty.description")}
+                      </div>
                     </div>
+                    <Button size="large" icon="folder-add-left" onClick={chooseProject}>
+                      {language.t("command.project.open")}
+                    </Button>
                   </div>
-                  <Button size="large" icon="folder-add-left" onClick={chooseProject}>
-                    {language.t("command.project.open")}
-                  </Button>
                 </div>
-              </div>
-            </Show>
+              </Match>
+              {/* Dashboard panel — shown on desktop only when on / with projects open in sidebar */}
+              <Match when={!params.dir && !panelProps.mobile && layout.projects.list().length > 0}>
+                <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                  <div class="shrink-0 px-3 pt-3 pb-2">
+                    <div class="text-12-medium text-text-weak uppercase tracking-wide">Open projects</div>
+                  </div>
+                  <div class="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                    <For each={layout.projects.list()}>
+                      {(proj) => {
+                        const projName = createMemo(() => proj.name || getFilename(proj.worktree))
+                        const projPath = createMemo(() => proj.worktree.replace(globalSync.data.path.home ?? "", "~"))
+                        return (
+                          <button
+                            type="button"
+                            class="w-full text-left px-3 py-2 hover:bg-surface-base-hover transition-colors group"
+                            onClick={() => {
+                              void openProject(proj.worktree)
+                            }}
+                          >
+                            <div class="text-13-medium text-text-strong truncate">{projName()}</div>
+                            <div class="text-11-regular text-text-weak font-mono truncate mt-0.5">{projPath()}</div>
+                          </button>
+                        )
+                      }}
+                    </For>
+                  </div>
+                </div>
+              </Match>
+            </Switch>
           }
         >
           {(project) => (
