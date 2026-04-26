@@ -165,8 +165,18 @@ export function Titlebar() {
 
   return (
     <header
-      class="h-10 shrink-0 bg-background-base relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
-      style={{ "min-height": minHeight() }}
+      class="shrink-0 bg-background-base relative z-30 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center isolate"
+      style={{
+        "min-height": minHeight() ?? "40px",
+        // Reserve room for the iOS status bar in PWA standalone mode without
+        // pushing the entire app shell down. Off-PWA env() returns 0 so this
+        // is a no-op for desktop and mobile Safari tab. The `isolate` + `z-30`
+        // pair forces a new stacking context so iOS Safari's translucent
+        // status-bar overlay never paints over the titlebar grid items in PWA
+        // standalone mode.
+        "padding-top": "env(safe-area-inset-top)",
+        height: "calc(env(safe-area-inset-top) + 2.5rem)",
+      }}
       data-tauri-drag-region
       onMouseDown={drag}
       onDblClick={maximize}
@@ -298,9 +308,23 @@ export function Titlebar() {
         </div>
       </div>
 
-      <div class="min-w-0 flex items-center justify-center pointer-events-none">
-        <div id="opencode-titlebar-center" class="pointer-events-auto min-w-0 flex justify-center w-fit max-w-full" />
-      </div>
+      {/*
+        Center slot host for portaled content (mobile session tabs pill,
+        dashboard search, session-header search). Kept flat with a single
+        overflow-hidden boundary and default pointer-events. A prior
+        nested `pointer-events-none → pointer-events-auto` pair here
+        appeared to trip iOS WKWebView hit-testing in PWA standalone
+        mode — after a tap inside the portaled pill mutated layout the
+        entire titlebar became unresponsive until the app was force
+        quit. Commit f4a78a87f froze the pill's label width to remove
+        the width mutation; this flattening removes the pointer-events
+        boundary. Both are kept as complementary hardening.
+      */}
+      <div
+        id="opencode-titlebar-center"
+        class="min-w-0 max-w-full flex items-center justify-center overflow-hidden"
+        style={{ "touch-action": "manipulation" }}
+      />
 
       <div
         classList={{
