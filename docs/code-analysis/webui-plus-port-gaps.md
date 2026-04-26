@@ -147,7 +147,7 @@ Substantial divergence. The newer-upstream items already in `actualyze` (and **n
 - **`pb-16 → pb-4` mobile turn-list bottom padding** (commit `f89d9034f`).
 - **Severity**: Moderate (last-message guard fixes a stuck-bar bug). Minor (pace constants, pb-4). **Restoration**: small but read carefully — the `showSessionProgressBar` upstream gate must be preserved.
 
-#### B14. `packages/app/src/pages/dashboard.tsx` — entire mobile rework
+#### B14. `packages/app/src/pages/dashboard.tsx` — entire mobile rework — **CANCELLED — current is on a newer upstream refactor** (extracted `dashboard-helpers.ts`, store-based state, `mobileSidebar.hide()` on mount, search/sort wiring, per-card new-session button, compact rows). Re-porting plus's older structure would be a regression. Verified by GPT-5 dual-review during plan validation. If a specific dashboard mobile UX issue surfaces, file as a separate task.
 
 `actualyze` has the dashboard from upstream `49b25ae67` "feat(app): native dashboard, status provider, and non-loopback auth gate" (the consolidated upstream version of plus's `d89b2cc1e`). **Plus has 9 follow-up commits** that did not land:
 
