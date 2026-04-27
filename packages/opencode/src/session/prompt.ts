@@ -1422,112 +1422,148 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             time: { created: Date.now() },
             sessionID,
           }
-          yield* sessions.updateMessage(msg)
-          const handle = yield* processor.create({
-            assistantMessage: msg,
-            sessionID,
-            model,
-          })
-
+          // Finalize-on-throw guard for the persisted assistant message.
+          //
+          // `sessions.updateMessage(msg)` below persists the assistant
+          // message with `time.completed = undefined`. If anything between
+          // that persist and the `Effect.ensuring(processor.cleanup())`
+          // scope inside `handle.process` throws (e.g. `processor.create`'s
+          // `snapshot.track()`, `resolveTools`, `plugin.trigger`,
+          // `Effect.all([sys.*, instruction.system, ...])`), the message
+          // would stay in DB with `time.completed = undefined` forever,
+          // causing the last-message-only `pending` UI derivation to
+          // render the turn as 'Thinking' permanently across reloads.
+          //
+          // `Effect.onError` runs uninterruptibly on any non-success Cause
+          // (Fail, Die, Interrupt) and rethrows automatically; the body
+          // is idempotent (no-op if `time.completed` was already set,
+          // e.g. by `processor.cleanup` on a `handle.process` failure).
+          // `Effect.catchCause(() => Effect.void)` on the inner update
+          // makes the cleanup truly infallible without masking the
+          // original cause — `Effect.ignore` alone can re-propagate
+          // defect causes in Effect v4.
+          //
+          // Refs upstream PR anomalyco/opencode#17593 (open) — same
+          // diagnosis, predates the Effect migration so we lift the
+          // idea, not the diff.
           const outcome: "break" | "continue" = yield* Effect.gen(function* () {
-            const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-            const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
-
-            const tools = yield* resolveTools({
-              agent,
-              session,
+            yield* sessions.updateMessage(msg)
+            const handle = yield* processor.create({
+              assistantMessage: msg,
+              sessionID,
               model,
-              tools: lastUser.tools,
-              processor: handle,
-              bypassAgentCheck,
-              messages: msgs,
             })
 
-            if (lastUser.format?.type === "json_schema") {
-              tools["StructuredOutput"] = createStructuredOutputTool({
-                schema: lastUser.format.schema,
-                onSuccess(output) {
-                  structured = output
-                },
+            return yield* Effect.gen(function* () {
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
+
+              const tools = yield* resolveTools({
+                agent,
+                session,
+                model,
+                tools: lastUser.tools,
+                processor: handle,
+                bypassAgentCheck,
+                messages: msgs,
               })
-            }
 
-            if (step === 1)
-              yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
+              if (lastUser.format?.type === "json_schema") {
+                tools["StructuredOutput"] = createStructuredOutputTool({
+                  schema: lastUser.format.schema,
+                  onSuccess(output) {
+                    structured = output
+                  },
+                })
+              }
 
-            if (step > 1 && lastFinished) {
-              for (const m of msgs) {
-                if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
-                for (const p of m.parts) {
-                  if (p.type !== "text" || p.ignored || p.synthetic) continue
-                  if (!p.text.trim()) continue
-                  p.text = [
-                    "<system-reminder>",
-                    "The user sent the following message:",
-                    p.text,
-                    "",
-                    "Please address this message and continue with your tasks.",
-                    "</system-reminder>",
-                  ].join("\n")
+              if (step === 1)
+                yield* summary
+                  .summarize({ sessionID, messageID: lastUser.id })
+                  .pipe(Effect.ignore, Effect.forkIn(scope))
+
+              if (step > 1 && lastFinished) {
+                for (const m of msgs) {
+                  if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
+                  for (const p of m.parts) {
+                    if (p.type !== "text" || p.ignored || p.synthetic) continue
+                    if (!p.text.trim()) continue
+                    p.text = [
+                      "<system-reminder>",
+                      "The user sent the following message:",
+                      p.text,
+                      "",
+                      "Please address this message and continue with your tasks.",
+                      "</system-reminder>",
+                    ].join("\n")
+                  }
                 }
               }
-            }
 
-            yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+              yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
-              Effect.sync(() => sys.environment(model)),
-              instruction.system().pipe(Effect.orDie),
-              MessageV2.toModelMessagesEffect(msgs, model),
-            ])
-            const system = [...env, ...(skills ? [skills] : []), ...instructions]
-            const format = lastUser.format ?? { type: "text" as const }
-            if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
-            const result = yield* handle.process({
-              user: lastUser,
-              agent,
-              permission: session.permission,
-              sessionID,
-              parentSessionID: session.parentID,
-              system,
-              messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
-              tools,
-              model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
-            })
+              const [skills, env, instructions, modelMsgs] = yield* Effect.all([
+                sys.skills(agent),
+                Effect.sync(() => sys.environment(model)),
+                instruction.system().pipe(Effect.orDie),
+                MessageV2.toModelMessagesEffect(msgs, model),
+              ])
+              const system = [...env, ...(skills ? [skills] : []), ...instructions]
+              const format = lastUser.format ?? { type: "text" as const }
+              if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+              const result = yield* handle.process({
+                user: lastUser,
+                agent,
+                permission: session.permission,
+                sessionID,
+                parentSessionID: session.parentID,
+                system,
+                messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
+                tools,
+                model,
+                toolChoice: format.type === "json_schema" ? "required" : undefined,
+              })
 
-            if (structured !== undefined) {
-              handle.message.structured = structured
-              handle.message.finish = handle.message.finish ?? "stop"
-              yield* sessions.updateMessage(handle.message)
-              return "break" as const
-            }
-
-            const finished = handle.message.finish && !["tool-calls", "unknown"].includes(handle.message.finish)
-            if (finished && !handle.message.error) {
-              if (format.type === "json_schema") {
-                handle.message.error = new MessageV2.StructuredOutputError({
-                  message: "Model did not produce structured output",
-                  retries: 0,
-                }).toObject()
+              if (structured !== undefined) {
+                handle.message.structured = structured
+                handle.message.finish = handle.message.finish ?? "stop"
                 yield* sessions.updateMessage(handle.message)
                 return "break" as const
               }
-            }
 
-            if (result === "stop") return "break" as const
-            if (result === "compact") {
-              yield* compaction.create({
-                sessionID,
-                agent: lastUser.agent,
-                model: lastUser.model,
-                auto: true,
-                overflow: !handle.message.finish,
-              })
-            }
-            return "continue" as const
-          }).pipe(Effect.ensuring(instruction.clear(handle.message.id)))
+              const finished = handle.message.finish && !["tool-calls", "unknown"].includes(handle.message.finish)
+              if (finished && !handle.message.error) {
+                if (format.type === "json_schema") {
+                  handle.message.error = new MessageV2.StructuredOutputError({
+                    message: "Model did not produce structured output",
+                    retries: 0,
+                  }).toObject()
+                  yield* sessions.updateMessage(handle.message)
+                  return "break" as const
+                }
+              }
+
+              if (result === "stop") return "break" as const
+              if (result === "compact") {
+                yield* compaction.create({
+                  sessionID,
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                  auto: true,
+                  overflow: !handle.message.finish,
+                })
+              }
+              return "continue" as const
+            }).pipe(Effect.ensuring(instruction.clear(handle.message.id)))
+          }).pipe(
+            Effect.onError(() =>
+              Effect.gen(function* () {
+                if (typeof msg.time.completed === "number") return
+                msg.time.completed = Date.now()
+                yield* sessions.updateMessage(msg).pipe(Effect.catchCause(() => Effect.void))
+              }),
+            ),
+          )
           if (outcome === "break") break
           continue
         }
