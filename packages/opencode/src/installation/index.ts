@@ -8,7 +8,7 @@ import z from "zod"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Log } from "../util"
-
+import { makeRuntime } from "@opencode-ai/core/effect/runtime"
 import semver from "semver"
 import {
   InstallationChannel,
@@ -166,6 +166,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       }
 
       // Use the package manager's resolver so registries, mirrors, auth, proxies, and dist-tags match upgrade behavior.
+      // Fork-only: required for GitHub Packages auth via ~/.npmrc; upstream uses NpmConfig + direct HTTP for the npmjs.org case.
       const viewVersion = Effect.fnUntraced(function* (method: "npm" | "pnpm" | "bun", spec: string) {
         const baseArgs =
           method === "bun" ? ["pm", "view", spec, "version", "--json"] : ["view", spec, "version", "--json"]
@@ -431,5 +432,11 @@ export const defaultLayer = layer.pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(CrossSpawnSpawner.defaultLayer),
 )
+
+const { runPromise } = makeRuntime(Service, defaultLayer)
+
+export const latest = (...args: Parameters<Interface["latest"]>) => runPromise((s) => s.latest(...args))
+export const method = () => runPromise((s) => s.method())
+export const upgrade = (...args: Parameters<Interface["upgrade"]>) => runPromise((s) => s.upgrade(...args))
 
 export * as Installation from "."
