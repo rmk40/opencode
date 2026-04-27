@@ -74,6 +74,7 @@ const emptyFollowups: FollowupItem[] = []
 
 type ChangeMode = "git" | "branch" | "turn"
 type VcsMode = "git" | "branch"
+type MobileTab = "session" | "changes"
 
 type SessionHistoryWindowInput = {
   sessionID: () => string | undefined
@@ -516,11 +517,55 @@ export default function Page() {
 
   const [store, setStore] = createStore({
     messageId: undefined as string | undefined,
-    mobileTab: "session" as "session" | "changes",
+    mobileTab: "session" as MobileTab,
+    // pillTarget is the user's last-tapped target. It updates synchronously
+    // on tap so the pill's pressed state can paint immediately, while the
+    // heavier `mobileTab` flip (which drives the pane visibility swap and
+    // its associated reactive cascade) is deferred to the next animation
+    // frame. Without this split the click handler's reactive work blocks
+    // paint, so the pill itself doesn't visibly update until the swap
+    // completes — making taps feel "dead" and inviting spam-clicking.
+    //
+    // `pillTarget`'s initial value MUST mirror `mobileTab`'s initial value
+    // above; the helper assumes they start in sync.
+    pillTarget: "session" as MobileTab,
+    pillSwitching: false,
     changes: "git" as ChangeMode,
     newSessionWorktree: "main",
     deferRender: false,
   })
+
+  let pillSwitchFrame: number | undefined
+  let pillSwitchTimer: number | undefined
+  const setMobileTab = (next: MobileTab) => {
+    // `pillTarget` is the source of truth for what the user wants. If it
+    // already equals `next`, the deferred commit is either already in
+    // flight or has already landed; in either case nothing useful to do.
+    if (store.pillTarget === next) return
+    batch(() => {
+      setStore("pillTarget", next)
+      setStore("pillSwitching", true)
+    })
+    if (pillSwitchFrame !== undefined) cancelAnimationFrame(pillSwitchFrame)
+    if (pillSwitchTimer !== undefined) window.clearTimeout(pillSwitchTimer)
+    // Two rAFs + a deferred task: the first rAF lets the browser paint
+    // the new pill state, the second rAF gives layout one more chance,
+    // and the setTimeout(0) task fires after the post-paint task queue
+    // drains. This mirrors the `deferRender` pattern used elsewhere in
+    // this file and keeps the heavy pane-swap work off the click frame.
+    pillSwitchFrame = requestAnimationFrame(() => {
+      pillSwitchFrame = requestAnimationFrame(() => {
+        pillSwitchFrame = undefined
+        pillSwitchTimer = window.setTimeout(() => {
+          pillSwitchTimer = undefined
+          batch(() => {
+            setStore("mobileTab", next)
+            setStore("pillSwitching", false)
+          })
+        }, 0)
+      })
+    })
+  }
   // Look up the titlebar center mount synchronously where possible (the
   // titlebar is in the persistent app layout, usually rendered above this
   // route), and fall back to onMount only if not yet in DOM. This avoids
@@ -1845,6 +1890,8 @@ export default function Page() {
     if (diffTimer !== undefined) window.clearTimeout(diffTimer)
     if (scrollStateFrame !== undefined) cancelAnimationFrame(scrollStateFrame)
     if (fillFrame !== undefined) cancelAnimationFrame(fillFrame)
+    if (pillSwitchFrame !== undefined) cancelAnimationFrame(pillSwitchFrame)
+    if (pillSwitchTimer !== undefined) window.clearTimeout(pillSwitchTimer)
   })
 
   return (
@@ -1862,18 +1909,46 @@ export default function Page() {
                 produce ~40px tap targets (close to iOS's 44px guideline)
                 so thumb taps reliably land on the intended button.
               */}
+              {/*
+                Pill visual state is driven by `pillTarget` (updates
+                synchronously on tap), not `mobileTab` (deferred to the
+                next animation frame so the pill paints before the heavy
+                pane swap reactive cascade runs).
+
+                Accessibility:
+                - Each button uses `aria-pressed` (not just background
+                  color) to announce which view is current, and
+                  `aria-disabled` (not native `disabled`) during the
+                  swap so the focused button doesn't lose focus to
+                  `<body>` mid-transition. The click handler short-
+                  circuits via the early return in `setMobileTab`.
+                - `aria-busy` is on each button (not the wrapper) so
+                  AT doesn't treat the whole subtree as "loading;
+                  ignore updates."
+
+                The `pending` cue (dim + pulse) on the target button
+                gives sighted users a visible "received, working" hint
+                without introducing a spinner element — on iOS Safari,
+                width-mutating spinners inside a portaled titlebar
+                have historically corrupted WebKit's hit-test cache.
+              */}
               <div
                 class="flex items-center rounded-md border border-border-weak-base bg-surface-panel overflow-hidden text-12-regular select-none"
                 style={{ "touch-action": "manipulation" }}
               >
                 <button
                   type="button"
-                  onClick={() => setStore("mobileTab", "session")}
+                  onClick={() => setMobileTab("session")}
+                  aria-pressed={store.pillTarget === "session"}
+                  aria-disabled={store.pillSwitching}
+                  aria-busy={store.pillSwitching && store.pillTarget === "session"}
                   class="px-3 py-2 transition-colors active:bg-surface-raised/60"
                   style={{ "touch-action": "manipulation" }}
                   classList={{
-                    "bg-surface-raised text-text-strong": store.mobileTab === "session",
-                    "text-text-weak": store.mobileTab !== "session",
+                    "bg-surface-raised text-text-strong": store.pillTarget === "session",
+                    "text-text-weak": store.pillTarget !== "session",
+                    "opacity-60 animate-pulse": store.pillSwitching && store.pillTarget === "session",
+                    "cursor-progress": store.pillSwitching,
                   }}
                 >
                   {language.t("session.tab.session")}
@@ -1891,12 +1966,17 @@ export default function Page() {
                 */}
                 <button
                   type="button"
-                  onClick={() => setStore("mobileTab", "changes")}
+                  onClick={() => setMobileTab("changes")}
+                  aria-pressed={store.pillTarget === "changes"}
+                  aria-disabled={store.pillSwitching}
+                  aria-busy={store.pillSwitching && store.pillTarget === "changes"}
                   class="px-3 py-2 transition-colors active:bg-surface-raised/60"
                   style={{ "touch-action": "manipulation" }}
                   classList={{
-                    "bg-surface-raised text-text-strong": store.mobileTab === "changes",
-                    "text-text-weak": store.mobileTab !== "changes",
+                    "bg-surface-raised text-text-strong": store.pillTarget === "changes",
+                    "text-text-weak": store.pillTarget !== "changes",
+                    "opacity-60 animate-pulse": store.pillSwitching && store.pillTarget === "changes",
+                    "cursor-progress": store.pillSwitching,
                   }}
                 >
                   {language.t("session.review.change.other")}
