@@ -165,6 +165,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         ].join("\n")
       }
 
+      // Use the package manager's resolver so registries, mirrors, auth, proxies, and dist-tags match upgrade behavior.
       const viewVersion = Effect.fnUntraced(function* (method: "npm" | "pnpm" | "bun", spec: string) {
         const baseArgs =
           method === "bun" ? ["pm", "view", spec, "version", "--json"] : ["view", spec, "version", "--json"]
@@ -208,208 +209,221 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         Effect.orDie,
       )
 
-      const methodImpl = Effect.fn("Installation.method")(function* () {
-        // Builds that publish to a custom npm registry (forks) cannot rely on
-        // the upstream curl installer. Treat .opencode/bin and .local/bin paths
-        // as curl only when the binary is upstream-published.
-        if (!InstallationNpmRegistry) {
-          if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl" as Method
-          if (process.execPath.includes(path.join(".local", "bin"))) return "curl" as Method
-        }
-
-        const exec = process.execPath.toLowerCase()
-
-        const allChecks: Array<{ name: Method; command: () => Effect.Effect<string> }> = [
-          { name: "npm", command: () => text(["npm", "list", "-g", "--depth=0"]) },
-          { name: "yarn", command: () => text(["yarn", "global", "list"]) },
-          { name: "pnpm", command: () => text(["pnpm", "list", "-g", "--depth=0"]) },
-          { name: "bun", command: () => text(["bun", "pm", "ls", "-g"]) },
-          { name: "brew", command: () => text(["brew", "list", "--formula", "opencode"]) },
-          { name: "scoop", command: () => text(["scoop", "list", "opencode"]) },
-          { name: "choco", command: () => text(["choco", "list", "--limit-output", "opencode"]) },
-        ]
-        // Fork builds only ship through the configured npm registry. Skip
-        // detection paths that would resolve to upstream distribution channels.
-        const checks = InstallationNpmRegistry
-          ? allChecks.filter((c) => c.name !== "brew" && c.name !== "scoop" && c.name !== "choco")
-          : allChecks
-
-        checks.sort((a, b) => {
-          const aMatches = exec.includes(a.name)
-          const bMatches = exec.includes(b.name)
-          if (aMatches && !bMatches) return -1
-          if (!aMatches && bMatches) return 1
-          return 0
-        })
-
-        for (const check of checks) {
-          const output = yield* check.command()
-          const installedName =
-            check.name === "brew" || check.name === "choco" || check.name === "scoop"
-              ? "opencode"
-              : InstallationNpmPackage
-          if (output.includes(installedName)) {
-            return check.name
-          }
-        }
-
-        return "unknown" as Method
-      })
-
-      const latestImpl = Effect.fn("Installation.latest")(function* (installMethod?: Method) {
-        const detectedMethod = installMethod || (yield* methodImpl())
-
-        if (detectedMethod === "brew") {
-          const formula = yield* getBrewFormula()
-          if (formula.includes("/")) {
-            const infoJson = yield* text(["brew", "info", "--json=v2", formula])
-            const info = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(BrewInfoV2))(infoJson)
-            return info.formulae[0].versions.stable
-          }
-          const response = yield* httpOk.execute(
-            HttpClientRequest.get("https://formulae.brew.sh/api/formula/opencode.json").pipe(
-              HttpClientRequest.acceptJson,
-            ),
-          )
-          const data = yield* HttpClientResponse.schemaBodyJson(BrewFormula)(response)
-          return data.versions.stable
-        }
-
-        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
-          return yield* viewVersion(detectedMethod, `${InstallationNpmPackage}@${InstallationChannel}`)
-        }
-
-        if (detectedMethod === "choco") {
-          const response = yield* httpOk.execute(
-            HttpClientRequest.get(
-              "https://community.chocolatey.org/api/v2/Packages?$filter=Id%20eq%20%27opencode%27%20and%20IsLatestVersion&$select=Version",
-            ).pipe(HttpClientRequest.setHeaders({ Accept: "application/json;odata=verbose" })),
-          )
-          const data = yield* HttpClientResponse.schemaBodyJson(ChocoPackage)(response)
-          return data.d.results[0].Version
-        }
-
-        if (detectedMethod === "scoop") {
-          const response = yield* httpOk.execute(
-            HttpClientRequest.get(
-              "https://raw.githubusercontent.com/ScoopInstaller/Main/master/bucket/opencode.json",
-            ).pipe(HttpClientRequest.setHeaders({ Accept: "application/json" })),
-          )
-          const data = yield* HttpClientResponse.schemaBodyJson(ScoopManifest)(response)
-          return data.version
-        }
-
-        // GitHub releases fallback. Channels other than "latest" only exist as
-        // prereleases, which /releases/latest excludes. List recent releases and
-        // pick the newest tag matching the configured channel pattern.
-        if (InstallationChannel !== "latest") {
-          const escapedChannel = InstallationChannel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-          const channelPattern = new RegExp(`^v\\d+\\.\\d+\\.\\d+-${escapedChannel}\\.\\d+$`)
-          const listResponse = yield* httpOk.execute(
-            HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases?per_page=30`).pipe(
-              HttpClientRequest.acceptJson,
-            ),
-          )
-          const releases = yield* HttpClientResponse.schemaBodyJson(GitHubReleaseList)(listResponse)
-          const matching = releases.filter((r) => !r.draft && channelPattern.test(r.tag_name))
-          if (matching.length > 0) {
-            // GitHub returns releases newest-first; pick the first match.
-            return matching[0].tag_name.replace(/^v/, "")
-          }
-        }
-        const response = yield* httpOk.execute(
-          HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases/latest`).pipe(
-            HttpClientRequest.acceptJson,
-          ),
-        )
-        const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
-        return data.tag_name.replace(/^v/, "")
-      }, Effect.orDie)
-
-      const upgradeImpl = Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
-        // target is interpolated into argv. cross-spawn does not invoke a shell,
-        // but a malformed target can confuse package manager argv parsing for
-        // scoop/choco. Reject anything that does not look like a SemVer or
-        // dist-tag identifier.
-        if (!/^[A-Za-z0-9._+-]+$/.test(target)) {
-          return yield* new UpgradeFailedError({ stderr: `invalid upgrade target: ${target}` })
-        }
-        const forkOnlyMethods = new Set<Method>(["brew", "choco", "scoop", "curl"])
-        if (InstallationNpmRegistry && forkOnlyMethods.has(m)) {
-          return yield* new UpgradeFailedError({
-            stderr: `${m} upgrades are not supported for builds published to ${InstallationNpmRegistry}. Reinstall with: npm install -g ${InstallationNpmPackage}@${target} --registry=${InstallationNpmRegistry}`,
-          })
-        }
-        let result: { code: ChildProcessSpawner.ExitCode; stdout: string; stderr: string } | undefined
-        switch (m) {
-          case "curl":
-            result = yield* upgradeCurl(target)
-            break
-          case "npm":
-            result = yield* run(["npm", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
-            break
-          case "pnpm":
-            result = yield* run(["pnpm", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
-            break
-          case "bun":
-            result = yield* run(["bun", "install", "-g", `${InstallationNpmPackage}@${target}`, ...registryArgs()])
-            break
-          case "brew": {
-            const formula = yield* getBrewFormula()
-            const env = { HOMEBREW_NO_AUTO_UPDATE: "1" }
-            if (formula.includes("/")) {
-              const tap = yield* run(["brew", "tap", "anomalyco/tap"], { env })
-              if (tap.code !== 0) {
-                result = tap
-                break
-              }
-              const repo = yield* text(["brew", "--repo", "anomalyco/tap"])
-              const dir = repo.trim()
-              if (dir) {
-                const pull = yield* run(["git", "pull", "--ff-only"], { cwd: dir, env })
-                if (pull.code !== 0) {
-                  result = pull
-                  break
-                }
-              }
-            }
-            result = yield* run(["brew", "upgrade", formula], { env })
-            break
-          }
-          case "choco":
-            result = yield* run(["choco", "upgrade", "opencode", `--version=${target}`, "-y"])
-            break
-          case "scoop":
-            result = yield* run(["scoop", "install", `opencode@${target}`])
-            break
-          default:
-            return yield* new UpgradeFailedError({ stderr: `Unknown method: ${m}` })
-        }
-        if (!result || result.code !== 0) {
-          const rawStderr = m === "choco" ? "not running from an elevated command shell" : result?.stderr || ""
-          const stderr = m === "npm" || m === "bun" || m === "pnpm" ? npmAuthHint(rawStderr) : rawStderr
-          return yield* new UpgradeFailedError({ stderr })
-        }
-        log.info("upgraded", {
-          method: m,
-          target,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        })
-        yield* text([process.execPath, "--version"])
-      })
-
-      return Service.of({
+      const result: Interface = {
         info: Effect.fn("Installation.info")(function* () {
           return {
             version: InstallationVersion,
-            latest: yield* latestImpl(),
+            latest: yield* result.latest(),
           }
         }),
-        method: methodImpl,
-        latest: latestImpl,
-        upgrade: upgradeImpl,
-      })
+        method: Effect.fn("Installation.method")(function* () {
+          // Builds that publish to a custom npm registry (forks) cannot rely on
+          // the upstream curl installer. Treat .opencode/bin and .local/bin paths
+          // as curl only when the binary is upstream-published.
+          if (!InstallationNpmRegistry) {
+            if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl" as Method
+            if (process.execPath.includes(path.join(".local", "bin"))) return "curl" as Method
+          }
+          const exec = process.execPath.toLowerCase()
+
+          const allChecks: Array<{ name: Method; command: () => Effect.Effect<string> }> = [
+            { name: "npm", command: () => text(["npm", "list", "-g", "--depth=0"]) },
+            { name: "yarn", command: () => text(["yarn", "global", "list"]) },
+            { name: "pnpm", command: () => text(["pnpm", "list", "-g", "--depth=0"]) },
+            { name: "bun", command: () => text(["bun", "pm", "ls", "-g"]) },
+            { name: "brew", command: () => text(["brew", "list", "--formula", "opencode"]) },
+            { name: "scoop", command: () => text(["scoop", "list", "opencode"]) },
+            { name: "choco", command: () => text(["choco", "list", "--limit-output", "opencode"]) },
+          ]
+          // Fork builds only ship through the configured npm registry. Skip
+          // detection paths that would resolve to upstream distribution channels.
+          const checks = InstallationNpmRegistry
+            ? allChecks.filter((c) => c.name !== "brew" && c.name !== "scoop" && c.name !== "choco")
+            : allChecks
+
+          checks.sort((a, b) => {
+            const aMatches = exec.includes(a.name)
+            const bMatches = exec.includes(b.name)
+            if (aMatches && !bMatches) return -1
+            if (!aMatches && bMatches) return 1
+            return 0
+          })
+
+          for (const check of checks) {
+            const output = yield* check.command()
+            const installedName =
+              check.name === "brew" || check.name === "choco" || check.name === "scoop"
+                ? "opencode"
+                : InstallationNpmPackage
+            if (output.includes(installedName)) {
+              return check.name
+            }
+          }
+
+          return "unknown" as Method
+        }),
+        latest: Effect.fn("Installation.latest")(function* (installMethod?: Method) {
+          const detectedMethod = installMethod || (yield* result.method())
+
+          if (detectedMethod === "brew") {
+            const formula = yield* getBrewFormula()
+            if (formula.includes("/")) {
+              const infoJson = yield* text(["brew", "info", "--json=v2", formula])
+              const info = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(BrewInfoV2))(infoJson)
+              return info.formulae[0].versions.stable
+            }
+            const response = yield* httpOk.execute(
+              HttpClientRequest.get("https://formulae.brew.sh/api/formula/opencode.json").pipe(
+                HttpClientRequest.acceptJson,
+              ),
+            )
+            const data = yield* HttpClientResponse.schemaBodyJson(BrewFormula)(response)
+            return data.versions.stable
+          }
+
+          if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
+            return yield* viewVersion(detectedMethod, `${InstallationNpmPackage}@${InstallationChannel}`)
+          }
+
+          if (detectedMethod === "choco") {
+            const response = yield* httpOk.execute(
+              HttpClientRequest.get(
+                "https://community.chocolatey.org/api/v2/Packages?$filter=Id%20eq%20%27opencode%27%20and%20IsLatestVersion&$select=Version",
+              ).pipe(HttpClientRequest.setHeaders({ Accept: "application/json;odata=verbose" })),
+            )
+            const data = yield* HttpClientResponse.schemaBodyJson(ChocoPackage)(response)
+            return data.d.results[0].Version
+          }
+
+          if (detectedMethod === "scoop") {
+            const response = yield* httpOk.execute(
+              HttpClientRequest.get(
+                "https://raw.githubusercontent.com/ScoopInstaller/Main/master/bucket/opencode.json",
+              ).pipe(HttpClientRequest.setHeaders({ Accept: "application/json" })),
+            )
+            const data = yield* HttpClientResponse.schemaBodyJson(ScoopManifest)(response)
+            return data.version
+          }
+
+          // GitHub releases fallback. Channels other than "latest" only exist as
+          // prereleases, which /releases/latest excludes. List recent releases and
+          // pick the newest tag matching the configured channel pattern.
+          if (InstallationChannel !== "latest") {
+            const escapedChannel = InstallationChannel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            const channelPattern = new RegExp(`^v\\d+\\.\\d+\\.\\d+-${escapedChannel}\\.\\d+$`)
+            const listResponse = yield* httpOk.execute(
+              HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases?per_page=30`).pipe(
+                HttpClientRequest.acceptJson,
+              ),
+            )
+            const releases = yield* HttpClientResponse.schemaBodyJson(GitHubReleaseList)(listResponse)
+            const matching = releases.filter((r) => !r.draft && channelPattern.test(r.tag_name))
+            if (matching.length > 0) {
+              // GitHub returns releases newest-first; pick the first match.
+              return matching[0].tag_name.replace(/^v/, "")
+            }
+          }
+          const response = yield* httpOk.execute(
+            HttpClientRequest.get(`https://api.github.com/repos/${InstallationRepo}/releases/latest`).pipe(
+              HttpClientRequest.acceptJson,
+            ),
+          )
+          const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
+          return data.tag_name.replace(/^v/, "")
+        }, Effect.orDie),
+        upgrade: Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
+          // target is interpolated into argv. cross-spawn does not invoke a shell,
+          // but a malformed target can confuse package manager argv parsing for
+          // scoop/choco. Reject anything that does not look like a SemVer or
+          // dist-tag identifier.
+          if (!/^[A-Za-z0-9._+-]+$/.test(target)) {
+            return yield* new UpgradeFailedError({ stderr: `invalid upgrade target: ${target}` })
+          }
+          const forkOnlyMethods = new Set<Method>(["brew", "choco", "scoop", "curl"])
+          if (InstallationNpmRegistry && forkOnlyMethods.has(m)) {
+            return yield* new UpgradeFailedError({
+              stderr: `${m} upgrades are not supported for builds published to ${InstallationNpmRegistry}. Reinstall with: npm install -g ${InstallationNpmPackage}@${target} --registry=${InstallationNpmRegistry}`,
+            })
+          }
+          let upgradeResult: { code: ChildProcessSpawner.ExitCode; stdout: string; stderr: string } | undefined
+          switch (m) {
+            case "curl":
+              upgradeResult = yield* upgradeCurl(target)
+              break
+            case "npm":
+              upgradeResult = yield* run([
+                "npm",
+                "install",
+                "-g",
+                `${InstallationNpmPackage}@${target}`,
+                ...registryArgs(),
+              ])
+              break
+            case "pnpm":
+              upgradeResult = yield* run([
+                "pnpm",
+                "install",
+                "-g",
+                `${InstallationNpmPackage}@${target}`,
+                ...registryArgs(),
+              ])
+              break
+            case "bun":
+              upgradeResult = yield* run([
+                "bun",
+                "install",
+                "-g",
+                `${InstallationNpmPackage}@${target}`,
+                ...registryArgs(),
+              ])
+              break
+            case "brew": {
+              const formula = yield* getBrewFormula()
+              const env = { HOMEBREW_NO_AUTO_UPDATE: "1" }
+              if (formula.includes("/")) {
+                const tap = yield* run(["brew", "tap", "anomalyco/tap"], { env })
+                if (tap.code !== 0) {
+                  upgradeResult = tap
+                  break
+                }
+                const repo = yield* text(["brew", "--repo", "anomalyco/tap"])
+                const dir = repo.trim()
+                if (dir) {
+                  const pull = yield* run(["git", "pull", "--ff-only"], { cwd: dir, env })
+                  if (pull.code !== 0) {
+                    upgradeResult = pull
+                    break
+                  }
+                }
+              }
+              upgradeResult = yield* run(["brew", "upgrade", formula], { env })
+              break
+            }
+            case "choco":
+              upgradeResult = yield* run(["choco", "upgrade", "opencode", `--version=${target}`, "-y"])
+              break
+            case "scoop":
+              upgradeResult = yield* run(["scoop", "install", `opencode@${target}`])
+              break
+            default:
+              return yield* new UpgradeFailedError({ stderr: `Unknown method: ${m}` })
+          }
+          if (!upgradeResult || upgradeResult.code !== 0) {
+            const rawStderr = m === "choco" ? "not running from an elevated command shell" : upgradeResult?.stderr || ""
+            const stderr = m === "npm" || m === "bun" || m === "pnpm" ? npmAuthHint(rawStderr) : rawStderr
+            return yield* new UpgradeFailedError({ stderr })
+          }
+          log.info("upgraded", {
+            method: m,
+            target,
+            stdout: upgradeResult.stdout,
+            stderr: upgradeResult.stderr,
+          })
+          yield* text([process.execPath, "--version"])
+        }),
+      }
+
+      return Service.of(result)
     }),
   )
 
