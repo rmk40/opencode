@@ -1,4 +1,4 @@
-import { Flag } from "@/flag/flag"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { Hono, type Context } from "hono"
 import { getMimeType } from "hono/utils/mime"
 import fs from "node:fs/promises"

@@ -2,6 +2,7 @@ import { Server } from "../../server/server"
 import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { assertAuthenticatedNetwork, withNetworkOptions, resolveNetworkOptions } from "../network"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import open from "open"
 import { networkInterfaces } from "os"
 
@@ -32,6 +33,9 @@ export const WebCommand = cmd({
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "start opencode server and open web interface",
   handler: async (args) => {
+    if (!Flag.OPENCODE_SERVER_PASSWORD) {
+      console.log("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.")
+    }
     const opts = await resolveNetworkOptions(args)
     assertAuthenticatedNetwork(opts)
     const server = await Server.listen(opts)

@@ -1,12 +1,16 @@
 import { Server } from "../../server/server"
 import { cmd } from "./cmd"
 import { assertAuthenticatedNetwork, withNetworkOptions, resolveNetworkOptions } from "../network"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export const ServeCommand = cmd({
   command: "serve",
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "starts a headless opencode server",
   handler: async (args) => {
+    if (!Flag.OPENCODE_SERVER_PASSWORD) {
+      console.log("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.")
+    }
     const opts = await resolveNetworkOptions(args)
     assertAuthenticatedNetwork(opts)
     const server = await Server.listen(opts)
