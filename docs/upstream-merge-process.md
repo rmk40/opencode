@@ -83,6 +83,24 @@ Both should match. If local is ahead, push first
 (`git pull --ff-only fork actualyze`). Don't merge while local
 disagrees with the remote release branch.
 
+### 4.5. Anchor tag
+
+Create a local-only tag pointing at the pre-merge HEAD. This is
+your clean revert target if anything goes wrong later — including
+after you've already committed merge fixups on top, where
+`git reset --hard fork/actualyze` would discard the fixups too.
+
+```bash
+NEW=v1.14.28   # the upstream tag you're about to merge
+git tag -f "pre-merge-${NEW}" HEAD
+echo "anchor: pre-merge-${NEW} = $(git rev-parse "pre-merge-${NEW}")"
+```
+
+If you're chaining multiple tags in one session (see 5.5 below),
+one anchor at the start of the session is enough. Don't push the
+anchor tag — it's a local safety net, not a release artifact. Drop
+it after the merge is verified and tagged (`git tag -d pre-merge-*`).
+
 ## Investigation phase
 
 ### 5. Range size
@@ -97,6 +115,36 @@ A range under 50 commits is routine. 50–200 deserves more careful
 review. >200 means consider splitting the merge across multiple
 intermediate tags or doing a focused diff against UI-relevant paths
 first.
+
+### 5.5. Single tag or multiple tags in one session
+
+If several upstream release tags have landed since our last merge
+(e.g. v1.14.26, v1.14.27, and v1.14.28 are all available and we
+last merged at v1.14.25), you have two options:
+
+- **One merge per tag, sequentially in one session.** Preferred when
+  upstream tags are close together and conflict surface is overlapping
+  (resolving the same file three times in one editing pass is faster
+  than three separate sessions). Each merge becomes its own merge
+  commit; bisect granularity is preserved.
+- **One big merge straight to the newest tag.** Faster, but a
+  regression introduced by any of the skipped intermediates can only
+  be bisected across one giant merge commit. Acceptable when the
+  intermediate tags are very small (under ~10 commits each) and you
+  want one merge commit to revert if needed.
+
+**Default to sequential per-tag merges.** Only collapse when you've
+checked the intermediate ranges and confirmed they're trivial.
+
+When chaining sequential merges:
+
+- Run typecheck + tests after **each** merge before starting the next.
+  A clean tree between merges keeps regressions attributable.
+- One anchor tag (step 4.5) at the start of the session is sufficient
+  — it points at the pre-session HEAD, and any of the per-tag merges
+  can be unwound by resetting to it.
+- The final fork release tag uses the **last** upstream version
+  (`v<NEWEST>-aai.1`), not the intermediate hops.
 
 ### 6. UI-impact triage
 
@@ -182,6 +230,46 @@ If the resolution is non-obvious, write the decision into the merge
 commit body so the next merger has a precedent. Update this doc's
 matrix when a non-obvious case repeats.
 
+### Silent miss: package-wide refactors that don't conflict
+
+The "keep ours" default for fork-owned files has a known failure
+mode: when upstream applies a **mechanical refactor** package-wide
+(e.g. renaming `@opencode-ai/shared/*` imports to
+`@opencode-ai/core/*` after the v1.14.26 `shared` → `core` package
+rename), the auto-merger only touches files where there's a textual
+conflict. Fork-owned files are kept on the "ours" side without
+warning, and any reference they have to the old name silently
+survives.
+
+**Symptoms:**
+
+- `bun typecheck` may still pass under `skipLibCheck` + bundler
+  resolution if the missing module's type shape happens to match.
+- `bun test` may pass because the file isn't exercised in tests.
+- Runtime fails with `ReferenceError`, `Cannot find module`, or
+  similar once the old name is fully purged from `node_modules`.
+
+**Counter:** after merging, before committing the merge, sweep for
+known-renamed identifiers across all packages:
+
+```bash
+# Adjust the patterns to whatever upstream just renamed.
+# Examples from past merges:
+grep -rn '@opencode-ai/shared'  --include='*.ts' --include='*.tsx' --include='*.json' packages/ | grep -v node_modules
+grep -rn '../../src/flag/flag'  --include='*.ts' --include='*.tsx' packages/ | grep -v node_modules
+grep -rn '../../src/installation/version' --include='*.ts' packages/ | grep -v node_modules
+```
+
+If the upstream merge introduced a new package rename or a new
+canonical import path, add a grep for it here. The patterns are
+cheap to run; missing them costs a follow-up commit and a runtime
+failure during smoke testing.
+
+When you find stale references, fix them in the merge commit if
+the merge isn't committed yet, or as a separate follow-up `fix:`
+commit citing the upstream PR that did the rename. Cite the PR
+either way — the commit becomes the precedent for the next merge.
+
 ### Resolving
 
 Standard `git mergetool` works. For text-only conflicts, manual edit
@@ -194,9 +282,16 @@ git status --short | grep "^U" # should be empty
 
 ## Verification
 
-### 8. Type-check and tests
+### 8. Stale-reference sweep, type-check, and tests
 
-From package directories (never repo root — guard rejects):
+Before typecheck, run the stale-reference greps from the "Silent
+miss: package-wide refactors" section above. Any hits are stale
+imports the auto-merger missed; fix them now (in the merge commit
+if the merge isn't committed yet, otherwise a follow-up `fix:`
+commit citing the upstream rename PR).
+
+Then run typecheck and tests from package directories (never repo
+root — guard rejects):
 
 ```bash
 cd packages/app && bun typecheck
@@ -210,6 +305,12 @@ If any package's typecheck or tests regress, the merge is not done.
 Most type errors after an upstream merge are SDK type drift in
 packages we don't own; they need fixes in our code if they're in our
 ported files. Don't disable tests to make the merge "go through".
+
+Note: `bun typecheck` (tsgo with `skipLibCheck` + `bundler`
+resolution) can pass even with a stale import to a deleted package
+when the missing symbol's type shape happens to match. The
+stale-reference grep above is the cheap counter — don't rely on
+typecheck alone to catch package-wide renames.
 
 ### 9. UI smoke test
 
@@ -313,12 +414,19 @@ suffix.
 ## Rollback
 
 If anything turns out wrong after merging but before tagging, you can
-reset:
+reset to the anchor tag from step 4.5:
 
 ```bash
-git reset --hard fork/actualyze   # discard the local merge commit
+git reset --hard pre-merge-v<NEW>   # the anchor tag, not fork/actualyze
 git push fork actualyze --force-with-lease   # only if you'd already pushed
 ```
+
+Reset to the **anchor tag**, not `fork/actualyze`. The anchor pins
+the pre-session HEAD; resetting to `fork/actualyze` only works if
+you haven't yet committed merge fixups on top of the merge — the
+moment you've added a fixup commit (e.g. resolving a stale import
+the auto-merger missed), `fork/actualyze` is no longer your clean
+revert target.
 
 `--force-with-lease` (not `--force`) ensures you don't clobber a
 push someone else made. We're solo on this branch in practice but
@@ -344,3 +452,26 @@ the irreversibility rules around tags + GitHub Packages.
   bumps only — no app/ui/app-shared source conflicts. The decision
   matrix is seeded from the webui-plus port mapping; expect to extend
   it on the first merge that hits a real conflict in those files.
+
+- **2026-04 v1.14.25 → v1.14.28 multi-hop merge**: three sequential
+  upstream merges (v1.14.26, v1.14.27, v1.14.28) in one session. 90
+  upstream commits, 402 files, 16 content conflicts plus 1
+  modify/delete (`packages/shared/` deleted upstream). Three additions
+  to this doc came out of that merge:
+  1. **Step 4.5 (anchor tag).** Created `pre-merge-v1.14.28` before
+     starting; needed it to be the rollback target instead of
+     `fork/actualyze` once two follow-up `fix:` commits landed on top
+     of the merge commits.
+  2. **Step 5.5 (single tag vs. multiple tags).** Merging tags one at
+     a time produced cleaner bisect granularity than collapsing into
+     one big merge would have, and the conflict-resolution muscle
+     memory carried across the three hops.
+  3. **"Silent miss: package-wide refactors" + grep sweep in step 8.**
+     The v1.14.26 `shared` → `core` rename was applied package-wide
+     upstream, but our fork-owned files (`dashboard.tsx`,
+     `ui-embedded-shadow-worker.ts`, `ui.test.ts`) kept the old
+     `@opencode-ai/shared/*` and `../../src/flag/flag` import paths
+     because they're "ours" by default and had no textual conflict.
+     `bun typecheck` passed; runtime would have failed. Caught by
+     `code-review-opus` post-merge and added a grep sweep so the next
+     mechanical refactor doesn't slip through.
