@@ -42,7 +42,7 @@ async function main() {
 
   // Import AFTER the mock and env are in place so ui.ts captures both.
   const { UIRoutes } = await import("../../src/server/routes/ui")
-  const { Flag } = await import("../../src/flag/flag")
+  const { Flag } = await import("@opencode-ai/core/flag/flag")
   // Mirror the env value into the cached Flag entry. `Flag.OPENCODE_WEB_UI_DIR`
   // is read from process.env once at flag.ts load; we need this set so the
   // disk branch WOULD activate if it were reachable. Combined with the embedded
