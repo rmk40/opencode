@@ -1,9 +1,6 @@
-import { readFileSync } from "node:fs"
 import solidPlugin from "vite-plugin-solid"
 import tailwindcss from "@tailwindcss/vite"
 import { fileURLToPath } from "url"
-
-const theme = fileURLToPath(new URL("./public/oc-theme-preload.js", import.meta.url))
 
 /**
  * @type {import("vite").PluginOption}
@@ -24,15 +21,13 @@ export default [
       }
     },
   },
-  {
-    name: "opencode-desktop:theme-preload",
-    transformIndexHtml(html) {
-      return html.replace(
-        '<script id="oc-theme-preload-script" src="/oc-theme-preload.js"></script>',
-        `<script id="oc-theme-preload-script">${readFileSync(theme, "utf8")}</script>`,
-      )
-    },
-  },
+  // Theme preload is served as an external file (`/oc-theme-preload.js`) so
+  // the embedded server's strict CSP (`script-src 'self' 'wasm-unsafe-eval'`)
+  // does not need a hash exception or `'unsafe-inline'`. The earlier
+  // build-time inline substitution traded a sub-millisecond round-trip on
+  // localhost for inline-script CSP friction; not worth the complexity.
+  // Refs upstream PR anomalyco/opencode#18985, upstream issue
+  // anomalyco/opencode#18325.
   tailwindcss(),
   solidPlugin(),
 ]
